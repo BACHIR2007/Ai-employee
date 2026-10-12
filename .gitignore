@@ -1,0 +1,44 @@
+# Dependencies
+
+node_modules/
+
+# Next.js build output
+
+.next/
+out/
+
+# Environment variables and secrets
+
+.env
+.env.*
+!.env.example
+*.pem
+
+# Production builds
+
+build/
+dist/
+
+# Logs
+
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Local deployment configuration
+
+.vercel/
+
+# Prisma local files
+
+prisma/*.db
+prisma/*.db-journal
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Operating system files
+
+.DS_Store
+Thumbs.db
