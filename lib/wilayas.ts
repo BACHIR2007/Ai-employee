@@ -1,12 +1,19 @@
 // Canonical Algerian wilaya list and resolution.
 //
-// SOURCE: Wikipedia "Provinces of Algeria" (en.wikipedia.org/wiki/Provinces_of_Algeria),
-// consulted 13 October 2026, which documents the 69 provinces created by
-// Law N° 26-06 signed 4 April 2026 (announced 16 November 2025). The project
-// owner approved using the current 69-wilaya list on 13 October 2026.
+// SOURCE (official, not Wikipedia):
+//   - Loi n° 26-06 du 4 avril 2026 relative a la nouvelle organisation
+//     territoriale du pays, Journal Officiel n° 25 du 5 avril 2026. This
+//     raised the number of wilayas from 58 to 69.
+//   - Decret presidentiel n° 26-206 du 8 Dhou El Hidja 1447, correspondant au
+//     25 mai 2026, completant le decret n° 84-79 du 3 avril 1984 fixant les
+//     noms et les chefs-lieux des wilayas, Journal Officiel n° 40 du 3 juin
+//     2026. This fixes the names, chefs-lieux and numbers of codes 59 to 69.
+// Consulted 14 October 2026. Codes 1-58 come from decret 84-79 of 3 April 1984
+// and its amendments (decret 21-117 of 22 March 2021 added codes 49-58).
 //
-// Codes 01-48 are the long-standing numbering; 49-58 were added in 2019; 59-69
-// were added by Law N° 26-06 in 2026.
+// KNOWN DIFFERENCE, reported to the owner on 14 October 2026 and deliberately
+// NOT changed: decret 26-206 spells code 68 "Bou Saadâa", while this list
+// keeps "Bousaâda". Both spellings resolve through the alias map.
 //
 // Per addendum A-01: Order.wilaya stores the canonical nameFr. Gemini returns
 // the wilaya exactly as the customer wrote it and this module resolves it.
