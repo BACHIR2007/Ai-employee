@@ -74,16 +74,16 @@ model Product {
 }
 
 model Conversation {
-  id        String           @id @default(uuid()) @db.Uuid
-  businessId String          @db.Uuid
+  id               String            @id @default(uuid()) @db.Uuid
+  businessId       String            @db.Uuid
   // The backend owns this phase; the model may suggest but never set it.
-  phase     ConversationPhase @default(IDLE)
+  phase            ConversationPhase @default(IDLE)
   // A-09: uncommitted single-product draft. Untrusted: revalidate before use.
-  orderDraft Json?
+  orderDraft       Json?
   // A-09: SHA-256 of the exact normalized draft shown in the latest summary.
   confirmationHash String?
-  createdAt        DateTime         @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime         @updatedAt @db.Timestamptz(3)
+  createdAt        DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime          @updatedAt @db.Timestamptz(3)
 
   business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
   messages Message[]
@@ -93,15 +93,15 @@ model Conversation {
 }
 
 model Message {
-  id             String       @id @default(uuid()) @db.Uuid
-  conversationId String       @db.Uuid
+  id             String        @id @default(uuid()) @db.Uuid
+  conversationId String        @db.Uuid
   senderType     SenderType
   // Nullable only while an AI call is PENDING.
   content        String?
   // Debug aid only. Never returned by a public API or the dashboard.
   rawAiOutput    Json?
   aiCallStatus   AiCallStatus?
-  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  createdAt      DateTime      @default(now()) @db.Timestamptz(3)
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
@@ -110,28 +110,28 @@ model Message {
 }
 
 model Order {
-  id             String         @id @default(uuid()) @db.Uuid
-  businessId     String         @db.Uuid
-  conversationId String         @db.Uuid
-  productId      String         @db.Uuid
-  quantity       Int
-  size           String?
-  color          String?
-  customerName   String
+  id              String         @id @default(uuid()) @db.Uuid
+  businessId      String         @db.Uuid
+  conversationId  String         @db.Uuid
+  productId       String         @db.Uuid
+  quantity        Int
+  size            String?
+  color           String?
+  customerName    String
   // Normalized Algerian mobile, validated as ^0[567][0-9]{8}$.
-  customerPhone  String
+  customerPhone   String
   // Snapshot taken from Product at creation time.
-  unitPrice      Decimal        @db.Decimal(12, 2)
-  deliveryMethod DeliveryMethod
+  unitPrice       Decimal        @db.Decimal(12, 2)
+  deliveryMethod  DeliveryMethod
   // A-01: canonical nameFr of the wilaya.
-  wilaya         String
+  wilaya          String
   // A-07: required for HOME, must be null for OFFICE.
   deliveryAddress String?
   // Snapshot of the configured delivery fee.
-  deliveryPrice  Decimal        @db.Decimal(12, 2)
-  status         OrderStatus    @default(NOT_YET_CONFIRMED)
-  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
+  deliveryPrice   Decimal        @db.Decimal(12, 2)
+  status          OrderStatus    @default(NOT_YET_CONFIRMED)
+  createdAt       DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @db.Timestamptz(3)
 
   business     Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
