@@ -1,12 +1,13 @@
 # AI Employee — Project Status
 
-Updated: 14 October 2026 (end of Day 3)
+Updated: 15 October 2026 (end of Day 4)
 
 ## Current state
 
-Days 1-3 of 14 complete. The app deploys to Vercel, reads and writes Neon
-PostgreSQL through Prisma, and answers product questions in Arabic, French and
-English. No order drafting, no confirmation gate, no dashboard, no chat UI yet.
+Days 1-4 of 14 complete. The app deploys to Vercel, reads and writes Neon
+PostgreSQL through Prisma, answers product questions in Arabic, French and
+English, and has a working chat page at `/`. No order drafting, no confirmation
+gate, no dashboard yet.
 
 ## Stack and versions
 
@@ -29,17 +30,15 @@ English. No order drafting, no confirmation gate, no dashboard, no chat UI yet.
 
 - **Prisma 7.10.0, not 8.** The npm `latest` tag points to `8.0.0-rc.22`, a
   release candidate. Addendum A-11 forbids release candidates.
-- **Gemini model: `gemini-3.5-flash-lite`.** `gemini-3.8-flash` was measured at
-  41-60+ seconds per call and would exceed the 20 s budget; the Flash-Lite model
-  answers in about 1.2-1.9 s. Model name comes from `GEMINI_MODEL`, never
-  hardcoded.
-- **69 wilayas.** Law 26-06 (4 Apr 2026) and Decree 26-206 (25 May 2026). Owner
-  approved the 69 list over the legacy 58 list. Source noted in `lib/wilayas.ts`.
-- **Delivery fees: office 400/500/600 DA by wilaya code, HOME = office + 200.**
-  Demo values, written out explicitly because the fee is part of the
-  confirmation hash.
-- **Demo store: "Boutique elegance"**, 5 products, deliberately low stock
-  (20/12/8/3/25) so out-of-stock paths are easy to demo.
+- **Gemini model: `gemini-3.5-flash-lite`.** `gemini-3.8-flash` measured 41-60+
+  seconds per call and exceeds the 20 s budget. Read from `GEMINI_MODEL`.
+- **69 wilayas**, per Loi 26-06 (4 Apr 2026) and Decret 26-206 (25 May 2026).
+- **Delivery fees: office 400/500/600 DA by code, HOME = office + 200.** Demo
+  values, explicit because the fee feeds the confirmation hash.
+- **Demo store: "Boutique elegance"**, 5 products, low stock (20/12/8/3/25).
+- **Catalog shown via `GET /api/catalog`** rather than Prisma directly in the
+  page. Importing Prisma into a prerendered page fails the build with an
+  unstable-value error under `cacheComponents`.
 
 ## Environment variables (names only, never values)
 
@@ -50,6 +49,18 @@ English. No order drafting, no confirmation gate, no dashboard, no chat UI yet.
 All 8 are set in Vercel Production and mirrored in the local `.env`, which is
 git-ignored. `.env.example` holds placeholders only.
 
+## Known deviations
+
+- **FAILED AI rows store `content: null`.** Spec 4.1 step 10 implies the
+  customer-visible fallback text is persisted. We keep failed rows null so the
+  history loader (A-06) cannot pick up an error message as a real reply.
+- **`fallbackLanguage` is a heuristic**, not a language classifier. It uses a
+  small English word list for the generic error when Gemini failed.
+- **Digits-only or signal-free messages fall back to French**, the demo's
+  primary language.
+- **Catalog is fetched client-side** rather than server-rendered, for the
+  `cacheComponents` build reason above. Still database-backed and uncached.
+
 ## Gotchas found
 
 - Next.js 16 `cacheComponents` **rejects** the `dynamic` and `runtime` route
@@ -59,10 +70,10 @@ git-ignored. `.env.example` holds placeholders only.
 - Prisma cannot express CHECK constraints; they are raw SQL in migrations.
 - `migrate dev --create-only` produces an empty migration when the only change
   is raw SQL, so the SQL is authored by hand into that new folder.
-- PowerShell mangles UTF-8 in the console (`à` shows as `Ã`). The database is
-  correct; verify with a script, not the console.
-- Gemini mislabels Arabic-script messages as French; the backend now applies a
-  deterministic script rule (spec 8.2).
+- PowerShell mangles UTF-8 in the console and in `Invoke-RestMethod`. Use a
+  Node `fetch` client for anything containing Arabic.
+- Gemini mislabels Arabic-script messages as French; the backend applies a
+  deterministic dominant-script rule (spec 8.2).
 - Neon compute sleeps, so the first query after idle can be slow.
 
 ## Commits
@@ -70,12 +81,12 @@ git-ignored. `.env.example` holds placeholders only.
 `8c3c948` scaffold · `33328cc` .env.example and README · `54f66dc` deployed
 home page + pg/Gemini SDKs · `567d466` gitignore fix · `7bacd5e` Prisma schema
 and first migration · `584c94b` CHECK constraints and seed · `0484235` wilaya
-allowlist, fees and Order constraints
+allowlist, fees and Order constraints · `6f076ba` Day 3 Gemini service and
+`/api/chat` · `587033e` Day 3 fixes (language, wilaya 68)
 
 ## Next steps
 
-1. **Day 4** — chat UI end to end on the deployed URL.
-2. **Day 5-6** — order draft, field validation, summary and confirmation hash.
-3. **Day 7** — transactional order creation with atomic stock decrement.
-4. **Day 9-11** — dashboard passcode, confirm/cancel, reset.
-5. Move the dashboard passcode to the real environment value before judging.
+1. **Day 5** — order draft state, field validation, missing-field logic.
+2. **Day 6-7** — summary, confirmation hash, transactional order creation.
+3. **Day 9-11** — dashboard passcode, confirm/cancel, reset.
+4. Replace the dashboard passcode placeholder before judging.

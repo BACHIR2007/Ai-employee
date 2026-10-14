@@ -159,6 +159,7 @@ export async function POST(request: Request) {
       missingFields: [],
       orderCreated: false,
       limited: true,
+      limitReason: "conversation",
     });
   }
 
@@ -177,6 +178,7 @@ export async function POST(request: Request) {
       missingFields: [],
       orderCreated: false,
       limited: true,
+      limitReason: "hourly",
     });
   }
 
@@ -235,6 +237,7 @@ export async function POST(request: Request) {
       missingFields: [],
       orderCreated: false,
       limited: false,
+      limitReason: null,
     });
   }
 
@@ -264,6 +267,7 @@ export async function POST(request: Request) {
     missingFields: [],
     orderCreated: false,
     limited: false,
+    limitReason: null,
   });
 }
 
