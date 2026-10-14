@@ -23,22 +23,71 @@ export const maxDuration = 60;
 
 const MAX_BODY_BYTES = 4_096;
 
-const hasArabicScript = (text: string) => /[\u0600-\u06ff]/.test(text);
+/**
+ * Minimal deterministic English-versus-not-English signal, used ONLY for the
+ * generic error fallback when Gemini failed and there is no model language to
+ * trust (spec 13.6).
+ *
+ * Both French and Latin-script Darija map to fr, so the only distinction that
+ * matters is "is this English". The list holds common English function and
+ * catalogue words that are not also ordinary French or Darija words. Words
+ * that exist in both languages (for example "prix", "merci", and the French
+ * pronoun "me") are deliberately excluded so they cannot cause a false "en".
+ */
+const ENGLISH_MARKERS = new Set([
+  "the", "is", "are", "what", "how", "much", "many", "price", "do", "you",
+  "have", "has", "can", "want", "need", "please", "thanks", "hello", "this",
+  "that", "of", "for", "in", "and", "with", "stock", "available", "size",
+  "color", "colour", "buy", "order", "deliver",
+]);
 
-// Spec 8.2 fallback: validate the model's language, and if it is absent or
-// invalid use a deterministic rule based on the latest message's script.
+function looksEnglish(text: string): boolean {
+  const words = text.toLowerCase().match(/[a-z]+/g) ?? [];
+  return words.some((word) => ENGLISH_MARKERS.has(word));
+}
+
+/**
+ * Spec 13.6: when the model gives no usable language, infer it from the latest
+ * customer message. Arabic-dominant text is ar; English is en; everything else
+ * - French and Latin-script Darija alike - is fr.
+ *
+ * A message with no usable signal at all (digits only, for example) falls back
+ * to fr, which is the demo's primary language. This is a documented default,
+ * not a claim of perfect detection.
+ */
 function fallbackLanguage(latest: string): Language {
-  return hasArabicScript(latest) ? "ar" : "fr";
+  if (dominantScriptIsArabic(latest)) return "ar";
+  return looksEnglish(latest) ? "en" : "fr";
+}
+
+/**
+ * Spec 8.2: "for unclear mixed Arabic/French, prefer the dominant script".
+ * Counts Arabic-script vs Latin letters so a mostly-English message that
+ * merely contains one Arabic word is not forced to Arabic.
+ */
+function dominantScriptIsArabic(text: string): boolean {
+  let arabic = 0;
+  let latin = 0;
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code >= 0x0600 && code <= 0x06ff) arabic += 1;
+    else if (
+      (code >= 0x41 && code <= 0x5a) || // A-Z
+      (code >= 0x61 && code <= 0x7a) // a-z
+    ) {
+      latin += 1;
+    }
+  }
+  return arabic > 0 && arabic >= latin;
 }
 
 /**
  * Spec 8.2 rule 1: "Arabic script, including Darija written in Arabic script"
- * is ar, and for mixed Arabic/French the dominant script wins. The model
- * sometimes returns "fr" for a message written in Arabic script, which would
- * produce a visibly wrong demo, so the script evidence is applied first.
+ * is ar. Gemini sometimes returns "fr" for a message written in Arabic script,
+ * so script evidence is applied before the model's own label.
  */
 function resolveLanguage(modelValue: string | undefined, latest: string): Language {
-  if (hasArabicScript(latest)) return "ar";
+  if (dominantScriptIsArabic(latest)) return "ar";
   return geminiLanguage(modelValue ?? "") ?? "fr";
 }
 

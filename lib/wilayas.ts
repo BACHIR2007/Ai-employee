@@ -11,9 +11,9 @@
 // Consulted 14 October 2026. Codes 1-58 come from decret 84-79 of 3 April 1984
 // and its amendments (decret 21-117 of 22 March 2021 added codes 49-58).
 //
-// KNOWN DIFFERENCE, reported to the owner on 14 October 2026 and deliberately
-// NOT changed: decret 26-206 spells code 68 "Bou Saadâa", while this list
-// keeps "Bousaâda". Both spellings resolve through the alias map.
+// KNOWN DIFFERENCE resolved on 14 October 2026: decret 26-206 spells code 68
+// "Bou Saâda", so that is now the canonical nameFr. The former spelling
+// "Bousaâda" is kept as an alias so existing data still resolves.
 //
 // Per addendum A-01: Order.wilaya stores the canonical nameFr. Gemini returns
 // the wilaya exactly as the customer wrote it and this module resolves it.
@@ -98,7 +98,7 @@ export const WILAYAS: Wilaya[] = [
   { code: 65, nameFr: "Aïn Oussera", nameAr: "عين وسارة" },
   { code: 66, nameFr: "Messaad", nameAr: "مسعد" },
   { code: 67, nameFr: "Ksar El Boukhari", nameAr: "قصر البخاري" },
-  { code: 68, nameFr: "Bousaâda", nameAr: "بوسعادة" },
+  { code: 68, nameFr: "Bou Saâda", nameAr: "بوسعادة" },
   { code: 69, nameFr: "El Abiodh Sidi Cheikh", nameAr: "الأبيض سيدي الشيخ" },
 ];
 
@@ -179,6 +179,7 @@ const ALIASES: Record<string, number> = {
   // The 2026 additions have competing spellings in the sources.
   "bou saada": 68,
   bousada: 68,
+  "bousaada": 68,
   "el abiod sidi cheikh": 69,
   "el abiod": 69,
 };
