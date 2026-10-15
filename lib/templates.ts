@@ -191,6 +191,32 @@ export const DRAFT_CANCELLED: Record<Language, string> = {
   en: "The draft order was cancelled. You can ask another question or start a new order.",
 };
 
+/**
+ * 13.2 Order created, status not yet confirmed by the business.
+ *
+ * Used ONLY after the transaction committed. The backend sends this text, not
+ * Gemini. It states that the order was recorded and is awaiting the store, and
+ * it never implies the store has confirmed anything.
+ */
+export const ORDER_CREATED: Record<Language, string> = {
+  ar: "تم تسجيل طلبك بنجاح. الطلب الآن في انتظار تأكيد المتجر.",
+  fr: "Votre commande a bien été enregistrée. Elle attend maintenant la confirmation du magasin.",
+  en: "Your order has been recorded successfully. It is now waiting for the store to confirm it.",
+};
+
+/**
+ * 13.3 Out of stock / unavailable quantity.
+ *
+ * Spec 13.7 note: use this one when a previously valid quantity becomes
+ * unavailable at final creation time, and 13.7 while collecting the draft.
+ * Every variant says the order was NOT created.
+ */
+export const ORDER_OUT_OF_STOCK: Record<Language, string> = {
+  ar: "عذرًا، الكمية المطلوبة لم تعد متوفرة. لم يتم تسجيل الطلب. يمكنك اختيار كمية أقل أو منتج آخر.",
+  fr: "Désolé, la quantité demandée n’est plus disponible. La commande n’a pas été enregistrée. Vous pouvez choisir une quantité plus petite ou un autre produit.",
+  en: "Sorry, the requested quantity is no longer available. The order was not created. You can choose a smaller quantity or another product.",
+};
+
 /** A-04 / A-08 new template 13.11: product changed, some fields were cleared. */
 export const PRODUCT_CHANGED: Record<Language, string> = {
   ar: "تم تغيير المنتج إلى {product}. يرجى اختيار {missingList} من جديد.",
@@ -209,16 +235,4 @@ export const CONFIRMATION_REJECTED: Record<Language, string> = {
   ar: "لم أفهم أنك تؤكد الطلب. راجع الملخص أعلاه وأعد إرساله إن كان صحيحًا، أو أخبرني بما تريد تغييره.",
   fr: "Je n'ai pas reconnu une confirmation. Relisez le résumé ci-dessus et renvoyez-le s'il est correct, ou dites-moi ce que vous voulez modifier.",
   en: "I did not recognise a confirmation. Please review the summary above and send it again if it is correct, or tell me what you want to change.",
-};
-
-/**
- * Day 6, the gate PASSED, but order placing is not active in this build.
- *
- * Deliberately neutral: it must never contain "created", "placed", "saved" or
- * "sent". Day 7 replaces this message with the real order result.
- */
-export const CONFIRMATION_RECEIVED: Record<Language, string> = {
-  ar: "تم استلام تأكيدك. إنشاء الطلبات غير مفعّل بعد في هذه النسخة التجريبية.",
-  fr: "Votre confirmation a bien été reçue. La création de commande n'est pas encore active dans cette version de démonstration.",
-  en: "Your confirmation has been received. Order placing is not active yet in this demo build.",
 };

@@ -8,6 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test:unit": "tsx scripts/unit.ts",
+    "test:orders": "tsx scripts/order-integration.ts",
+    "test:restore-stock": "tsx scripts/restore-seed-stock.ts",
     "test:scenarios": "tsx scripts/scenarios.mjs",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",

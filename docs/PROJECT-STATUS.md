@@ -1,14 +1,14 @@
 # AI Employee — Project Status
 
-Updated: 17 October 2026 (end of Day 6)
+Updated: 18 October 2026 (end of Day 7)
 
 ## Current state
 
-Days 1-6 of 14 complete. Deployed on Vercel, backed by Neon PostgreSQL through
+Days 1-7 of 14 complete. Deployed on Vercel, backed by Neon PostgreSQL through
 Prisma. Answers product questions, collects order details in Arabic, French and
-English, and renders a backend-built localized order summary with a SHA-256
-confirmation hash. **No order is created and no stock is touched** — that is
-Day 7. No dashboard yet.
+English, shows a backend-built localized summary with a SHA-256 confirmation
+hash, and creates **exactly one** transactional Order from one explicit
+confirmation. No dashboard yet.
 
 ## Stack
 
@@ -33,6 +33,14 @@ Next.js 16.4.0 (App Router, Turbopack, `cacheComponents`) · React 19.3.0 · Typ
 - `lib/system-prompt.ts` — confirmation-intent rules: نعم / oui / yes / wah / confirmi confirm; hmm, wait, maybe, questions and "yes, but make it 3" do not.
 - `scripts/unit.ts` — offline unit suite, `npm run test:unit`.
 
+## Day 7 deliverables
+
+- `lib/order-create.ts` — `createOrderFromConfirmedDraft`, the ONLY place that creates an Order or changes stock. Per A-09 it recomputes the hash from current data **before** the transaction; on a mismatch it creates nothing and stores a fresh summary + hash. Otherwise, in **one** transaction it (a) consumes the gate with a single conditional `updateMany` on `(id, phase = AWAITING_CONFIRMATION, confirmationHash = stored)` requiring exactly one row, (b) revalidates against the freshly read Product row, (c) decrements stock with `WHERE stockQuantity >= quantity` requiring exactly one row, (d) inserts the Order with status `NOT_YET_CONFIRMED` and price snapshots. Every failure rolls back everything, including the gate update.
+- `app/api/chat/route.ts` — `CREATE_ORDER` now calls it and replaces Gemini's reply with the spec template: 13.2 order created, 13.3 out of stock, the fresh summary on a price change, `CONFIRMATION_REJECTED` on a bad gate, 13.8 generic on anything unexpected (AI row marked FAILED).
+- `lib/templates.ts` — added **13.2 `ORDER_CREATED`** and **13.3 `ORDER_OUT_OF_STOCK`**; removed the Day 6 `CONFIRMATION_RECEIVED` stub. Every §13 template now exists in ar/fr/en and is backend-authored.
+- `scripts/order-integration.ts` — 65 offline checks against the real database, including a serial double call, two **concurrent** calls, out-of-stock at creation, price changed, hash mismatch, wrong phase, and a forced failure after the gate update proving it rolls back.
+- `scripts/restore-seed-stock.ts` — tracked, manual only, UPDATE-only. Restores the five seeded stock values without deleting anything.
+
 ## Environment (names only, never values)
 
 `DATABASE_URL`, `DIRECT_URL`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `DASHBOARD_PASSCODE`, `SESSION_SECRET`, `DEMO_AI_CALLS_PER_HOUR`, `DEMO_MAX_CUSTOMER_MESSAGES_PER_CONVERSATION`. All 8 are set in Vercel Production and mirrored in the git-ignored local `.env`.
@@ -55,9 +63,21 @@ Next.js 16.4.0 (App Router, Turbopack, `cacheComponents`) · React 19.3.0 · Typ
 
 - **`DEMO_AI_CALLS_PER_HOUR` is raised in Vercel for testing. Lower it on Day 12** (A-10). Local runs override it at process level; `.env` is never edited or printed.
 - `npm run test:scenarios -- <base-url>` paces itself at ≥5 s between calls and ≤12 per rolling minute, stops immediately on a provider 429 or our own cap, and prints the number of Gemini calls made.
+- **`npm run test:orders` writes real rows.** It creates Orders in the demo database and only ever adds them. Run `npm run test:restore-stock` afterwards to put stock back to the seed values; it never deletes an Order.
+- **The Order table holds 16 fake test Orders** from the Day 7 integration and scenario runs (name "Test Client", phone 0550123456). They are intentional evidence that the path works; the **Day 11 reset** is what clears them.
+- A stale `next start` can keep holding port 4200 and silently serve an OLD build, which looks exactly like a code fix that did nothing. Always check the port owner before a run.
+
+## Test commands
+
+| Command | What it does |
+|---|---|
+| `npm run test:unit` | 103 offline checks, no database, no Gemini |
+| `npm run test:orders` | 65 checks against the real database, creates Orders |
+| `npm run test:restore-stock` | UPDATE-only reset of the 5 seeded stock values |
+| `npm run test:scenarios -- <url>` | full chat suite against a running app |
 
 ## Next steps
 
-1. **Day 7** — transactional order creation: consume the gate with a single conditional `updateMany`, revalidate, decrement stock conditionally, create the order, roll everything back on failure.
-2. **Days 9-11** — dashboard passcode, confirm/cancel, reset.
+1. **Day 8** — 20-scenario language and workflow pass on the deployed URL, including the out-of-stock race and a repeat confirmation.
+2. **Days 9-11** — dashboard passcode, confirm/cancel with stock restore, demo reset.
 3. Replace the dashboard passcode placeholder before judging.

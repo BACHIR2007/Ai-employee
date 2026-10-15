@@ -14,11 +14,14 @@ import {
   type Draft,
   type FieldError,
 } from "@/lib/draft";
-import { evaluateConfirmationGate } from "@/lib/confirmation-gate";
 import { prepareOrder } from "@/lib/order-summary";
 import {
+  createOrderFromConfirmedDraft,
+  loadTrustedCatalog,
+  OrderCreationError,
+} from "@/lib/order-create";
+import {
   ADDRESS_NOT_ALLOWED,
-  CONFIRMATION_RECEIVED,
   CONFIRMATION_REJECTED,
   CONVERSATION_LIMIT,
   DEMO_BUSY,
@@ -33,6 +36,8 @@ import {
   INVALID_REQUEST,
   INVALID_SIZE_OR_COLOR,
   MESSAGE_TOO_LONG,
+  ORDER_CREATED,
+  ORDER_OUT_OF_STOCK,
   PRODUCT_CHANGED,
   PRODUCT_NOT_FOUND,
   QUANTITY_TOO_HIGH,
@@ -162,6 +167,149 @@ function storedLanguage(raw: unknown): Language | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const value = (raw as { resolvedLanguage?: unknown }).resolvedLanguage;
   return value === "ar" || value === "fr" || value === "en" ? value : undefined;
+}
+
+/**
+ * Day 7 spec 10.1 / A-09, wired to the CREATE_ORDER action.
+ *
+ * Spec 8.4 rule 1: the backend message REPLACES Gemini's reply on both the
+ * success and the failure paths, so the customer never sees model text that
+ * contradicts what the database actually did.
+ *
+ * Only the reply, the AI row and the response are handled here. The draft,
+ * phase, hash, stock and Orders are owned by lib/order-create.ts.
+ */
+async function runOrderCreation(args: {
+  conversationId: string;
+  language: Language;
+  aiRowId: string;
+  parsed: unknown;
+  attempts: number;
+  budget: number;
+}) {
+  const { conversationId, language, aiRowId } = args;
+
+  /** Writes the AI row and returns the API body for one outcome. */
+  const respond = async (opts: {
+    reply: string;
+    orderId: string | null;
+    gate: string;
+    status: "SUCCEEDED" | "FAILED";
+    /** Shown when the draft survived, so the UI state stays truthful. */
+    keepDraft: boolean;
+  }) => {
+    await prisma.message.update({
+      where: { id: aiRowId },
+      data: {
+        content: opts.reply,
+        aiCallStatus: opts.status,
+        rawAiOutput: {
+          parsed: args.parsed,
+          resolvedLanguage: language,
+          orderResult: opts.gate,
+          orderId: opts.orderId,
+          attempts: args.attempts,
+          budget: args.budget,
+        } as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { phase: true, orderDraft: true, confirmationHash: true },
+    });
+    const catalog = await loadTrustedCatalog(
+      (await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversationId },
+        select: { businessId: true },
+      })).businessId,
+    );
+
+    return okJson({
+      conversationId,
+      reply: opts.reply,
+      language,
+      phase: conversation?.phase ?? "IDLE",
+      missingFields: opts.keepDraft
+        ? computeMissingFields((conversation?.orderDraft ?? {}) as Draft, catalog)
+        : [],
+      orderCreated: opts.orderId !== null,
+      limited: false,
+      limitReason: null,
+      __draft: opts.keepDraft ? ((conversation?.orderDraft ?? {}) as Draft) : {},
+      __hash: opts.keepDraft ? conversation?.confirmationHash ?? null : null,
+      __gate: opts.gate,
+      __orderId: opts.orderId,
+    });
+  };
+
+  try {
+    // NOTE: the optional test-only failure flag is deliberately NOT passed
+    // here, so it cannot be reached from the public API.
+    const created = await createOrderFromConfirmedDraft({ conversationId, language });
+
+    // Spec 13.2: the backend sends the localized "order created" text.
+    return await respond({
+      reply: ORDER_CREATED[language],
+      orderId: created.orderId,
+      gate: "created",
+      status: "SUCCEEDED",
+      keepDraft: false,
+    });
+  } catch (e) {
+    const err = e instanceof OrderCreationError ? e : null;
+
+    if (err?.kind === "price-changed" && err.summary && err.hash) {
+      // A-09: the confirmed numbers moved. Create nothing, show the new ones.
+      return await respond({
+        reply: err.summary,
+        orderId: null,
+        gate: "price-changed",
+        status: "SUCCEEDED",
+        keepDraft: true,
+      });
+    }
+
+    if (err?.kind === "out-of-stock") {
+      // 13.3: never claims success, and the draft is untouched.
+      return await respond({
+        reply: ORDER_OUT_OF_STOCK[language],
+        orderId: null,
+        gate: "out-of-stock",
+        status: "SUCCEEDED",
+        keepDraft: true,
+      });
+    }
+
+    if (err?.kind === "gate-rejected") {
+      return await respond({
+        reply: CONFIRMATION_REJECTED[language],
+        orderId: null,
+        gate: `gate-rejected:${err.detail}`,
+        status: "SUCCEEDED",
+        keepDraft: true,
+      });
+    }
+
+    if (err?.kind === "invalid-draft") {
+      return await respond({
+        reply: GENERIC_ERROR[language],
+        orderId: null,
+        gate: `invalid-draft:${err.detail}`,
+        status: "SUCCEEDED",
+        keepDraft: true,
+      });
+    }
+
+    // Anything else, including the test-only forced failure: 13.8.
+    return await respond({
+      reply: GENERIC_ERROR[language],
+      orderId: null,
+      gate: "error",
+      status: "FAILED",
+      keepDraft: true,
+    });
+  }
 }
 
 function okJson(body: unknown) {
@@ -357,49 +505,20 @@ export async function POST(request: Request) {
   let draft = currentDraft;
   let phase: string = conversation.phase;
 
-  // --- Day 6: evaluate a CREATE_ORDER proposal against the confirmation gate.
-  // Pure check. Day 6 never creates an order, never consumes the confirmation
-  // and never touches stock; that is Day 7.
+  // --- Day 7: CREATE_ORDER goes through lib/order-create.ts.
+  // The backend, not Gemini, decides the outcome and sends the reply. Every
+  // failure path keeps the draft intact unless the transaction already
+  // consumed it.
   if (action.type === "CREATE_ORDER") {
-    const gate = evaluateConfirmationGate({
-      phase: conversation.phase,
-      storedHash: conversation.confirmationHash,
-      draft: currentDraft,
-      catalog: catalogProducts,
-    });
-
-    // Claims nothing in either case: no order is created, placed or saved.
-    reply = gate.ok ? CONFIRMATION_RECEIVED[language] : CONFIRMATION_REJECTED[language];
-
-    await prisma.message.update({
-      where: { id: aiRow.id },
-      data: {
-        content: reply,
-        aiCallStatus: "SUCCEEDED",
-        rawAiOutput: {
-          parsed: outcome.data,
-          resolvedLanguage: language,
-          gate: gate.ok ? "passed" : gate.reason,
-          attempts: outcome.attempts,
-          budget,
-        } as unknown as Prisma.InputJsonValue,
-      },
-    });
-
-    // Draft, phase and hash are deliberately left intact for Day 7.
-    return okJson({
+    const outcome7 = await runOrderCreation({
       conversationId: conversation.id,
-      reply,
       language,
-      phase: conversation.phase,
-      missingFields: computeMissingFields(currentDraft, catalogProducts),
-      orderCreated: false,
-      limited: false,
-      limitReason: null,
-      __draft: currentDraft,
-      __hash: conversation.confirmationHash,
-      __gate: gate.ok ? "passed" : gate.reason,
+      aiRowId: aiRow.id,
+      parsed: outcome.data,
+      attempts: outcome.attempts,
+      budget,
     });
+    return outcome7;
   }
 
   const finish = async () => {

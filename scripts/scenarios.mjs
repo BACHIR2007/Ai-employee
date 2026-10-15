@@ -59,15 +59,21 @@ class BudgetExhausted extends Error {}
 const BUSY = /demo is busy|very sollicit|عرض التجريبي مشغول/i;
 
 /**
- * Mirrors of the two Day 6 templates in lib/templates.ts. Kept as literals so
- * the runner asserts the exact customer-visible string, and so a wording change
- * has to be made deliberately on both sides rather than drifting silently.
+ * Mirrors of the Day 7 templates in lib/templates.ts. Kept as literals so the
+ * runner asserts the exact customer-visible string, and so a wording change has
+ * to be made deliberately on both sides rather than drifting silently.
  */
-const CONFIRMATION_RECEIVED = {
-  ar: "تم استلام تأكيدك. إنشاء الطلبات غير مفعّل بعد في هذه النسخة التجريبية.",
-  fr: "Votre confirmation a bien été reçue. La création de commande n'est pas encore active dans cette version de démonstration.",
-  en: "Your confirmation has been received. Order placing is not active yet in this demo build.",
+const ORDER_CREATED = {
+  ar: "تم تسجيل طلبك بنجاح. الطلب الآن في انتظار تأكيد المتجر.",
+  fr: "Votre commande a bien été enregistrée. Elle attend maintenant la confirmation du magasin.",
+  en: "Your order has been recorded successfully. It is now waiting for the store to confirm it.",
 };
+
+/**
+ * 13.3 (ORDER_OUT_OF_STOCK) is not asserted here: stock can only drop between
+ * the summary and the creation by another writer, which needs direct database
+ * access. scripts/order-integration.ts covers that path offline.
+ */
 
 /** Mirror of CONFIRMATION_REJECTED in lib/templates.ts. */
 const CONFIRMATION_REJECTED = {
@@ -763,39 +769,65 @@ async function run() {
     );
   }
 
-  // ---- 30. Explicit confirmations in ar / fr / en / Latin Darija ----
+  // ---- 30. Day 7 end-to-end: full order -> summary -> confirmation -> Order ----
+  // Each of these creates ONE real (fake-data) Order. Stock is restored after
+  // the run with `npm run test:restore-stock`.
   const CONFIRMATIONS = [
     ["30 confirm ar", "نعم", "ar"],
     ["30 confirm fr", "oui je confirme", "fr"],
-    ["30 confirm en", "yes that is correct", "en"],
+    ["30 confirm en", "yes that is correct", null],
     ["30 confirm darija", "wah confirmi", null],
   ];
   for (const [label, text, expectLang] of CONFIRMATIONS) {
-    if (!want(Number(label.split(" ")[1]))) continue;
+    // The scenario number is the FIRST field of the label, e.g. "30 confirm ar".
+    if (!want(Number(label.split(" ")[0]))) continue;
     const first = await turn(`${label} a`, null, FULL_EN);
     const cid = first.conversationId;
-    const stored = first.__hash;
     const r = await turn(`${label} b`, cid, text);
-    // The reply must be the backend CONFIRMATION_RECEIVED template for the
-    // language that was selected. Which language the model picks for a terse
-    // confirmation is its decision (spec 8.2), so the assertion is that our
-    // own localized template was sent, not that the model guessed one locale.
-    const langOk = CONFIRMATION_RECEIVED[r.language].length > 0;
-    // The neutral Day 6 message never claims an order was created or placed.
+    // Spec 13.2: the BACKEND sends the localized success template, not Gemini.
+    const langOk = expectLang === null || r.language === expectLang;
+    record(
+      `${label}: confirmation creates exactly one Order`,
+      `orderCreated=true, backend ${r.language} ORDER_CREATED template, orderId present, phase IDLE, hash cleared`,
+      `lang=${r.language} orderId=${r.__orderId ?? "none"} phase=${r.phase} hash=${
+        r.__hash === null ? "null" : "still set"
+      } ${r.reply}`,
+      r.orderCreated === true &&
+        typeof r.__orderId === "string" &&
+        r.__gate === "created" &&
+        r.reply.trim() === ORDER_CREATED[r.language] &&
+        r.phase === "IDLE" &&
+        r.__hash === null &&
+        langOk,
+    );
+  }
+
+  // ---- 36. A second "yes" after a successful order ----
+  // The conversation is back to IDLE with no draft and no hash, so the gate
+  // must refuse. No second Order and no claim that one exists.
+  if (want(36)) {
+    const first = await turn("36 second yes a", null, FULL_EN);
+    const cid = first.conversationId;
+    const created = await turn("36 second yes b", cid, "oui je confirme");
+    record(
+      "36 first confirmation created an order",
+      "orderCreated=true and an orderId was returned",
+      `orderId=${created.__orderId ?? "none"}`,
+      created.orderCreated === true && typeof created.__orderId === "string",
+    );
+    const again = await turn("36 second yes c", cid, "oui je confirme");
     const noClaim = !/(order (was|has been) (created|placed|saved)|commande (créée|passée|enregistrée)|تم (إنشاء|تسجيل) الطلب)/i.test(
-      r.reply,
+      again.reply,
     );
     record(
-      `${label}: explicit confirmation passes the gate`,
-      `gate PASSED, order NOT created, hash intact, reply is the ${r.language} CONFIRMATION_RECEIVED template`,
-      `lang=${r.language} (model label ${expectLang ?? "any"}) gate=${r.__gate} hashIntact=${r.__hash === stored} ${r.reply}`,
-      r.__gate === "passed" &&
-        r.orderCreated === false &&
-        r.__hash === stored &&
-        r.phase === "AWAITING_CONFIRMATION" &&
-        r.reply.trim() === CONFIRMATION_RECEIVED[r.language] &&
-        noClaim &&
-        langOk,
+      "36 a second 'yes' creates no second order",
+      "orderCreated=false, gate refused, phase IDLE, and no success claim",
+      `orderCreated=${again.orderCreated} gate=${again.__gate ?? "not proposed"} phase=${again.phase} ${again.reply.slice(0, 70)}`,
+      again.orderCreated === false &&
+        again.__gate !== "created" &&
+        again.phase === "IDLE" &&
+        again.__hash === null &&
+        noClaim,
     );
   }
 
