@@ -1,13 +1,14 @@
 # AI Employee — Project Status
 
-Updated: 15 October 2026 (end of Day 4)
+Updated: 16 October 2026 (end of Day 5)
 
 ## Current state
 
-Days 1-4 of 14 complete. The app deploys to Vercel, reads and writes Neon
+Days 1-5 of 14 complete. The app deploys to Vercel, reads and writes Neon
 PostgreSQL through Prisma, answers product questions in Arabic, French and
-English, and has a working chat page at `/`. No order drafting, no confirmation
-gate, no dashboard yet.
+English, and collects order details in a chat page at `/`. The draft is stored
+and validated server-side; no order is created yet (that is Day 7), and there is
+no dashboard.
 
 ## Stack and versions
 
@@ -60,33 +61,46 @@ git-ignored. `.env.example` holds placeholders only.
   primary language.
 - **Catalog is fetched client-side** rather than server-rendered, for the
   `cacheComponents` build reason above. Still database-backed and uncached.
+- **The chat response echoes the stored draft** under `__draft` so the scenario
+  runner can assert on it. It holds only allowlisted customer-supplied fields
+  for that conversation and never `rawAiOutput`.
+- **Gemini extracts, the backend decides.** The model may decline an invalid
+  option in its own words instead of sending it, so the localized rejection
+  template does not always fire; the invalid value is still never stored.
+- **Arabic wilaya spellings vary.** `resolveWilaya` retries once with
+  alef/ya/teh-marbuta collapsed, so `تيسمسيلت` and `تسمسيلت` both reach 38.
+
+- **Region:** the Vercel project region is set to `fra1` (Frankfurt) to match the
+  Neon database in AWS eu-central-1. Confirm with `vercel project inspect`.
+- **DEMO_AI_CALLS_PER_HOUR was raised in Vercel for testing; the final value is
+  decided on Day 12** (A-10). Lower it before the judging window.
+- **Scenario runner:** `node scripts/scenarios.mjs <base-url>` runs the 24-check
+  suite. It stops with "cap or quota reached" instead of reporting a budget
+  limit as a test failure, and prints how many Gemini calls it made.
 
 ## Gotchas found
 
 - Next.js 16 `cacheComponents` **rejects** the `dynamic` and `runtime` route
-  segment exports; data is dynamic by default. `maxDuration` is still allowed.
-- Prisma 7 needs `prisma.config.ts` at the project root, `output` on the
-  generator, a driver adapter, and `dotenv`; it no longer auto-loads `.env`.
-- Prisma cannot express CHECK constraints; they are raw SQL in migrations.
-- `migrate dev --create-only` produces an empty migration when the only change
-  is raw SQL, so the SQL is authored by hand into that new folder.
-- PowerShell mangles UTF-8 in the console and in `Invoke-RestMethod`. Use a
-  Node `fetch` client for anything containing Arabic.
-- Gemini mislabels Arabic-script messages as French; the backend applies a
-  deterministic dominant-script rule (spec 8.2).
-- Neon compute sleeps, so the first query after idle can be slow.
+  segment exports; `maxDuration` is still allowed.
+- Prisma 7 needs `prisma.config.ts`, a generator `output`, a driver adapter and
+  `dotenv`; it no longer auto-loads `.env`. CHECK constraints are raw SQL.
+- PowerShell mangles UTF-8; use a Node `fetch` client for anything with Arabic.
+- A free-form `payload` object makes Gemini return `{}`. The nine keys must be
+  enumerated and required-but-nullable.
 
 ## Commits
 
-`8c3c948` scaffold · `33328cc` .env.example and README · `54f66dc` deployed
-home page + pg/Gemini SDKs · `567d466` gitignore fix · `7bacd5e` Prisma schema
+`8c3c948` scaffold · `54f66dc` deployed page + SDKs · `7bacd5e` Prisma schema
 and first migration · `584c94b` CHECK constraints and seed · `0484235` wilaya
-allowlist, fees and Order constraints · `6f076ba` Day 3 Gemini service and
-`/api/chat` · `587033e` Day 3 fixes (language, wilaya 68)
+allowlist and fees · `6f076ba` Day 3 Gemini service and `/api/chat` · `587033e`
+Day 3 language fixes · `cc3e7c5` Day 4 chat UI · `86b53ae` chat UX and design ·
+`3cb9b1a` Day 5 draft extraction and validation
 
 ## Next steps
 
-1. **Day 5** — order draft state, field validation, missing-field logic.
-2. **Day 6-7** — summary, confirmation hash, transactional order creation.
+1. **Day 6** — backend-generated order summary, localized, plus the SHA-256
+   confirmation hash bound to the exact normalized draft (A-09).
+2. **Day 7** — transactional order creation with an atomic stock decrement and
+   the single-use confirmation gate.
 3. **Day 9-11** — dashboard passcode, confirm/cancel, reset.
 4. Replace the dashboard passcode placeholder before judging.

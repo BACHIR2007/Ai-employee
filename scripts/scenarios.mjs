@@ -23,6 +23,10 @@ const want = (n) => only.length === 0 || only.includes(String(n));
 const FAKE_PHONE = "0550123456"; // fake test data
 const FAKE_NAME = "Test Client"; // fake test data
 
+/** Thrown when the call budget is gone, so a cap is never scored as a failure. */
+class BudgetExhausted extends Error {}
+const BUSY = /demo is busy|very sollicit|عرض التجريبي مشغول/i;
+
 /** Product ids are resolved by name so the script survives reseeding. */
 async function catalog() {
   const res = await fetch(`${BASE}/api/catalog`);
@@ -66,14 +70,31 @@ async function run() {
   const capped = await capStatus();
   if (capped) {
     console.log(
-      `\n!! The ${capped} cap is currently in effect, so later scenarios will be\n` +
-        `   rejected before they reach Gemini. Wait for the hourly window to\n` +
-        `   roll over, or raise DEMO_AI_CALLS_PER_HOUR for local testing.`,
+      `\n!! The ${capped} cap is already in effect, so no scenario can reach Gemini.`,
     );
   }
 
+  // Stop immediately on cap or provider quota exhaustion. Reporting a cap as a
+  // test failure would be misleading: the code under test never ran.
+  function assertBudget(r) {
+    if (r._status === 429) {
+      throw new BudgetExhausted(
+        "STOP: provider quota error (HTTP 429) from Gemini. This is a Google quota, not our cap.",
+      );
+    }
+    if (r.limited || BUSY.test(r.reply ?? "")) {
+      throw new BudgetExhausted(
+        `STOP: the ${r.limitReason ?? "hourly"} call cap is in effect, so the remaining scenarios never reached Gemini. ` +
+          `This is our own cap, not a test failure. Wait for the rolling hour or raise DEMO_AI_CALLS_PER_HOUR.`,
+      );
+    }
+  }
+
+  let calls = 0;
   async function turn(label, cid, message) {
+    calls += 1;
     const r = await chat(cid, message);
+    assertBudget(r);
     const draft = JSON.stringify(r.__draft ?? null);
     console.log(`\n  [${label}] customer: ${message}`);
     console.log(`    reply   : ${r.reply}`);
@@ -389,9 +410,14 @@ async function run() {
   console.log(
     `\n${rows.length - failed}/${rows.length} scenarios passed${failed ? `, ${failed} FAILED` : ""}`,
   );
+  console.log(`Gemini calls made by this run: ${calls}`);
 }
 
 run().catch((e) => {
+  if (e instanceof BudgetExhausted) {
+    console.error(`\n${e.message}`);
+    process.exit(2);
+  }
   console.error("runner failed:", e && e.message ? e.message : e);
   process.exit(1);
 });
