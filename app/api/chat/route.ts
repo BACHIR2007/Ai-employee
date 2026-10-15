@@ -14,8 +14,12 @@ import {
   type Draft,
   type FieldError,
 } from "@/lib/draft";
+import { evaluateConfirmationGate } from "@/lib/confirmation-gate";
+import { prepareOrder } from "@/lib/order-summary";
 import {
   ADDRESS_NOT_ALLOWED,
+  CONFIRMATION_RECEIVED,
+  CONFIRMATION_REJECTED,
   CONVERSATION_LIMIT,
   DEMO_BUSY,
   DRAFT_CANCELLED,
@@ -102,13 +106,62 @@ function dominantScriptIsArabic(text: string): boolean {
 }
 
 /**
+ * Explicit "speak language X" requests. This is deliberately narrow: it only
+ * recognises a customer naming a language, so it cannot fire on product names,
+ * quantities or addresses. The demo catalogue is French, and no product,
+ * wilaya or field label contains any of these words.
+ */
+const LANGUAGE_REQUEST_MARKERS: Array<{ language: Language; re: RegExp }> = [
+  {
+    language: "ar",
+    re: /\b(arabic|arabe)\b|parl[ea]z?\s+en\s+arabe|répondez\s+en\s+arabe|بالعربية|بالعربي\b/i,
+  },
+  {
+    language: "en",
+    re: /\benglish\b|parl[ea]z?\s+en\s+anglais|répondez\s+en\s+anglais|بالانجليزية|بالإنجليزية/i,
+  },
+  {
+    language: "fr",
+    re: /\bfrench\b|français|parl[ea]z?\s+en\s+français|répondez\s+en\s+français|بالفرنسية/i,
+  },
+];
+
+/**
  * Spec 8.2 rule 1: "Arabic script, including Darija written in Arabic script"
  * is ar. Gemini sometimes returns "fr" for a message written in Arabic script,
  * so script evidence is applied before the model's own label.
+ *
+ * `conversationLanguage` is the language the backend itself used for the
+ * previous reply, stored on the AI row. It makes the choice sticky: once a
+ * customer has asked for English, the next order summary is shown in English
+ * too. Without it a terse follow-up such as "change the quantity to 1" is
+ * re-classified by the model on its own and silently reverts the conversation.
+ *
+ * Two things still override it, so a customer is never trapped: Arabic script
+ * in the current message, and an explicit request naming another language.
  */
-function resolveLanguage(modelValue: string | undefined, latest: string): Language {
+function resolveLanguage(
+  modelValue: string | undefined,
+  latest: string,
+  conversationLanguage?: Language,
+): Language {
   if (dominantScriptIsArabic(latest)) return "ar";
-  return geminiLanguage(modelValue ?? "") ?? "fr";
+
+  for (const marker of LANGUAGE_REQUEST_MARKERS) {
+    if (marker.re.test(latest)) return marker.language;
+  }
+
+  return conversationLanguage ?? geminiLanguage(modelValue ?? "") ?? "fr";
+}
+
+/**
+ * The backend-resolved language recorded on a previous AI row, if any.
+ * This is our own decision, not the model's, so it is authoritative.
+ */
+function storedLanguage(raw: unknown): Language | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const value = (raw as { resolvedLanguage?: unknown }).resolvedLanguage;
+  return value === "ar" || value === "fr" || value === "en" ? value : undefined;
 }
 
 function okJson(body: unknown) {
@@ -163,6 +216,16 @@ export async function POST(request: Request) {
     where: { senderType: "AI", aiCallStatus: "PENDING", createdAt: { lt: new Date(Date.now() - 60_000) } },
     data: { aiCallStatus: "FAILED" },
   });
+
+  // --- The language the conversation is already being held in ---
+  // Read from the last AI row that recorded one, so the choice survives the
+  // next turn without guessing from the reply text.
+  const lastAssistant = await prisma.message.findFirst({
+    where: { conversationId: conversation.id, senderType: "AI" },
+    orderBy: { createdAt: "desc" },
+    select: { rawAiOutput: true },
+  });
+  const conversationLanguage = storedLanguage(lastAssistant?.rawAiOutput ?? null);
 
   // --- Limits: per-conversation and global hourly (spec 9.1, A-06/A-10) ---
   const maxPerConversation = Number(process.env.DEMO_MAX_CUSTOMER_MESSAGES_PER_CONVERSATION ?? 40);
@@ -285,7 +348,7 @@ export async function POST(request: Request) {
     });
   }
 
-  const language = resolveLanguage(outcome.data.language, message);
+  const language = resolveLanguage(outcome.data.language, message, conversationLanguage);
   const modelReply = outcome.data.reply.trim();
   const budget = PER_ATTEMPT_TIMEOUT_MS + RETRY_OVERHEAD_MS;
 
@@ -294,6 +357,51 @@ export async function POST(request: Request) {
   let draft = currentDraft;
   let phase: string = conversation.phase;
 
+  // --- Day 6: evaluate a CREATE_ORDER proposal against the confirmation gate.
+  // Pure check. Day 6 never creates an order, never consumes the confirmation
+  // and never touches stock; that is Day 7.
+  if (action.type === "CREATE_ORDER") {
+    const gate = evaluateConfirmationGate({
+      phase: conversation.phase,
+      storedHash: conversation.confirmationHash,
+      draft: currentDraft,
+      catalog: catalogProducts,
+    });
+
+    // Claims nothing in either case: no order is created, placed or saved.
+    reply = gate.ok ? CONFIRMATION_RECEIVED[language] : CONFIRMATION_REJECTED[language];
+
+    await prisma.message.update({
+      where: { id: aiRow.id },
+      data: {
+        content: reply,
+        aiCallStatus: "SUCCEEDED",
+        rawAiOutput: {
+          parsed: outcome.data,
+          resolvedLanguage: language,
+          gate: gate.ok ? "passed" : gate.reason,
+          attempts: outcome.attempts,
+          budget,
+        } as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    // Draft, phase and hash are deliberately left intact for Day 7.
+    return okJson({
+      conversationId: conversation.id,
+      reply,
+      language,
+      phase: conversation.phase,
+      missingFields: computeMissingFields(currentDraft, catalogProducts),
+      orderCreated: false,
+      limited: false,
+      limitReason: null,
+      __draft: currentDraft,
+      __hash: conversation.confirmationHash,
+      __gate: gate.ok ? "passed" : gate.reason,
+    });
+  }
+
   const finish = async () => {
     const missingFields = computeMissingFields(draft, catalogProducts);
     await prisma.conversation.update({
@@ -301,9 +409,13 @@ export async function POST(request: Request) {
       data: {
         orderDraft:
           Object.keys(draft).length === 0
-            ? Prisma.JsonNull
+            ? Prisma.DbNull
             : (draft as unknown as Prisma.InputJsonValue),
         phase: phase as never,
+        // The hash is cleared whenever the draft changed, and set only when a
+        // summary is actually issued. A question that changes nothing leaves
+        // the stored hash untouched, so it stays valid.
+        confirmationHash: conversation.confirmationHash,
       },
     });
     await prisma.message.update({
@@ -313,6 +425,7 @@ export async function POST(request: Request) {
         aiCallStatus: "SUCCEEDED",
         rawAiOutput: {
           parsed: outcome.data,
+          resolvedLanguage: language,
           attempts: outcome.attempts,
           budget,
         } as unknown as Prisma.InputJsonValue,
@@ -333,6 +446,7 @@ export async function POST(request: Request) {
       // customer-supplied fields and never rawAiOutput. Safe for the public
       // endpoint because the draft is scoped to this conversation.
       __draft: draft,
+      __hash: conversation.confirmationHash,
     });
   };
 
@@ -354,7 +468,7 @@ export async function POST(request: Request) {
       data: {
         content: reply,
         aiCallStatus: "SUCCEEDED",
-        rawAiOutput: { parsed: outcome.data, attempts: outcome.attempts, budget } as unknown as Prisma.InputJsonValue,
+        rawAiOutput: { parsed: outcome.data, resolvedLanguage: language, attempts: outcome.attempts, budget } as unknown as Prisma.InputJsonValue,
       },
     });
     return okJson({
@@ -368,6 +482,9 @@ export async function POST(request: Request) {
       orderCreated: false,
       limited: false,
       limitReason: null,
+      __draft: {},
+      // CANCEL_DRAFT clears the stored hash along with the draft.
+      __hash: null,
     });
   }
 
@@ -400,9 +517,72 @@ export async function POST(request: Request) {
         selected?.name ?? "",
       ).replace("{missingList}", missingLabels);
     }
+
+    // --- Day 6 summary, hash and state transition.
+    // Spec 8.4 rule 1: a rejection owns the reply, so a rejected turn never
+    // also produces a summary.
+    if (merged.errors.length > 0) {
+      // The turn left AWAITING_CONFIRMATION, so any stored hash is stale by
+      // construction. Clearing it keeps the database free of a confirmation
+      // that the customer can no longer see a summary for.
+      conversation.confirmationHash = null;
+    } else {
+      // Any accepted order-relevant change invalidates the old hash immediately
+      // (section 17 Day 6). Comparing canonical drafts means a pure question
+      // that changes nothing leaves both the phase and the hash alone.
+      if (!sameDraft(currentDraft, draft)) conversation.confirmationHash = null;
+
+      // A complete draft produces the trusted summary, a fresh hash and
+      // AWAITING_CONFIRMATION. The backend summary replaces the model's reply.
+      const prepared = prepareOrder(draft, catalogProducts, language);
+      if (prepared.ok) {
+        phase = "AWAITING_CONFIRMATION";
+        conversation.confirmationHash = prepared.order.hash;
+        reply = prepared.order.summary;
+      } else if (prepared.blocked === "quantity-too-high-stock") {
+        // Refuse the summary with the existing stock template. Stock itself is
+        // not touched; only the summary and the hash are withheld.
+        phase = "ORDER_COLLECTION";
+        conversation.confirmationHash = null;
+        reply = QUANTITY_TOO_HIGH[language].replace(
+          "{stockQuantity}",
+          String(
+            catalogProducts.find((p) => p.id === draft.productId)?.stockQuantity ??
+              0,
+          ),
+        );
+      } else if (prepared.blocked === "unknown-fee") {
+        // No trusted fee means no summary and no hash (A-09).
+        phase = "ORDER_COLLECTION";
+        conversation.confirmationHash = null;
+        reply = GENERIC_ERROR[language];
+      }
+    }
   }
 
+  // finish() persists the draft, the phase, the hash and the reply, and echoes
+  // the resulting state for the scenario runner.
   return finish();
+}
+
+/**
+ * True when two drafts carry identical order-relevant values. The key order is
+ * fixed so the comparison does not depend on how the draft was built. This is
+ * the only definition of "the order changed" used by the route.
+ */
+function sameDraft(a: Draft, b: Draft): boolean {
+  const pick = (d: Draft) => ({
+    productId: d.productId ?? null,
+    quantity: d.quantity ?? null,
+    size: d.size ?? null,
+    color: d.color ?? null,
+    customerName: d.customerName ?? null,
+    customerPhone: d.customerPhone ?? null,
+    deliveryMethod: d.deliveryMethod ?? null,
+    wilaya: d.wilaya ?? null,
+    deliveryAddress: d.deliveryAddress ?? null,
+  });
+  return JSON.stringify(pick(a)) === JSON.stringify(pick(b));
 }
 
 function geminiLanguage(value: string): Language | null {

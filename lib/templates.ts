@@ -197,3 +197,28 @@ export const PRODUCT_CHANGED: Record<Language, string> = {
   fr: "Le produit est maintenant {product}. Veuillez choisir à nouveau : {missingList}.",
   en: "The product is now {product}. Please choose again: {missingList}.",
 };
+
+/**
+ * Day 6, the confirmation gate rejected the proposal: there was no summary yet,
+ * the stored hash was absent or stale, or the draft was no longer valid.
+ *
+ * The wording never implies an order was created. It asks the customer to
+ * review the summary again, which is what actually needs to happen.
+ */
+export const CONFIRMATION_REJECTED: Record<Language, string> = {
+  ar: "لم أفهم أنك تؤكد الطلب. راجع الملخص أعلاه وأعد إرساله إن كان صحيحًا، أو أخبرني بما تريد تغييره.",
+  fr: "Je n'ai pas reconnu une confirmation. Relisez le résumé ci-dessus et renvoyez-le s'il est correct, ou dites-moi ce que vous voulez modifier.",
+  en: "I did not recognise a confirmation. Please review the summary above and send it again if it is correct, or tell me what you want to change.",
+};
+
+/**
+ * Day 6, the gate PASSED, but order placing is not active in this build.
+ *
+ * Deliberately neutral: it must never contain "created", "placed", "saved" or
+ * "sent". Day 7 replaces this message with the real order result.
+ */
+export const CONFIRMATION_RECEIVED: Record<Language, string> = {
+  ar: "تم استلام تأكيدك. إنشاء الطلبات غير مفعّل بعد في هذه النسخة التجريبية.",
+  fr: "Votre confirmation a bien été reçue. La création de commande n'est pas encore active dans cette version de démonstration.",
+  en: "Your confirmation has been received. Order placing is not active yet in this demo build.",
+};

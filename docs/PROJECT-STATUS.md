@@ -1,106 +1,63 @@
 # AI Employee — Project Status
 
-Updated: 16 October 2026 (end of Day 5)
+Updated: 17 October 2026 (end of Day 6)
 
 ## Current state
 
-Days 1-5 of 14 complete. The app deploys to Vercel, reads and writes Neon
-PostgreSQL through Prisma, answers product questions in Arabic, French and
-English, and collects order details in a chat page at `/`. The draft is stored
-and validated server-side; no order is created yet (that is Day 7), and there is
-no dashboard.
+Days 1-6 of 14 complete. Deployed on Vercel, backed by Neon PostgreSQL through
+Prisma. Answers product questions, collects order details in Arabic, French and
+English, and renders a backend-built localized order summary with a SHA-256
+confirmation hash. **No order is created and no stock is touched** — that is
+Day 7. No dashboard yet.
 
-## Stack and versions
+## Stack
 
-| Component | Version |
-|---|---|
-| Next.js | 16.4.0 (App Router, Turbopack, `cacheComponents` enabled) |
-| React | 19.3.0 |
-| TypeScript | ^5 |
-| Tailwind CSS | ^4 |
-| Node.js | 24.20.0 (local), Vercel build image |
-| Prisma / @prisma/client | 7.10.0 |
-| @prisma/adapter-neon | 7.10.0 |
-| @google/genai | 2.28.0 |
-| zod | 4.6.7 |
-| pg | 8.23.1 |
-| Neon PostgreSQL | pooled `DATABASE_URL` at runtime, direct `DIRECT_URL` for migrations |
-| Vercel | Hobby plan |
+Next.js 16.4.0 (App Router, Turbopack, `cacheComponents`) · React 19.3.0 · TypeScript ^5 · Tailwind ^4 · Prisma 7.10.0 + @prisma/adapter-neon · @google/genai 2.28.0 · zod 4.6.7 · pg 8.23.1 · Node 24.20.0 · Neon PostgreSQL (pooled `DATABASE_URL`, direct `DIRECT_URL` for migrations) · Vercel Hobby, region pinned to `fra1`.
 
 ## Key decisions
 
-- **Prisma 7.10.0, not 8.** The npm `latest` tag points to `8.0.0-rc.22`, a
-  release candidate. Addendum A-11 forbids release candidates.
-- **Gemini model: `gemini-3.5-flash-lite`.** `gemini-3.8-flash` measured 41-60+
-  seconds per call and exceeds the 20 s budget. Read from `GEMINI_MODEL`.
-- **69 wilayas**, per Loi 26-06 (4 Apr 2026) and Decret 26-206 (25 May 2026).
-- **Delivery fees: office 400/500/600 DA by code, HOME = office + 200.** Demo
-  values, explicit because the fee feeds the confirmation hash.
-- **Demo store: "Boutique elegance"**, 5 products, low stock (20/12/8/3/25).
-- **Catalog shown via `GET /api/catalog`** rather than Prisma directly in the
-  page. Importing Prisma into a prerendered page fails the build with an
-  unstable-value error under `cacheComponents`.
+- **Prisma 7.10.0, not 8** — npm `latest` points at `8.0.0-rc.22`; A-11 forbids RCs.
+- **Gemini `gemini-3.5-flash-lite`** — `gemini-3.8-flash` measured 41-60 s/call, over the 20 s budget.
+- **69 wilayas** (Loi 26-06, Décret 26-206). Day 6 audit: 276 inputs, **0 failures, 0 collisions**.
+- **Fees: office 400/500/600 DA by code, HOME = office + 200.** Explicit demo values because the fee feeds the hash.
+- **Catalog via `GET /api/catalog`** — importing Prisma into a prerendered page fails the build under `cacheComponents`.
+- **The backend owns every number.** Gemini never supplies prices, fees, totals, canonical identities or the summary text.
+- **Language is not hashed.** A language-only change keeps the hash valid.
 
-## Environment variables (names only, never values)
+## Day 6 deliverables
 
-`DATABASE_URL`, `DIRECT_URL`, `GEMINI_API_KEY`, `GEMINI_MODEL`,
-`DASHBOARD_PASSCODE`, `SESSION_SECRET`, `DEMO_AI_CALLS_PER_HOUR`,
-`DEMO_MAX_CUSTOMER_MESSAGES_PER_CONVERSATION`
+- `lib/order-summary.ts` — canonical normalization, trusted pricing from the database + `lib/delivery.ts`, integer-minor-unit arithmetic, the verbatim §13.1 ar/fr/en summary, and `buildConfirmationHash` (SHA-256 over a fixed-key JSON of the normalized draft + `unitPrice` + `deliveryPrice` + `total`). One formatter feeds both the summary and the hash, so the hashed string is literally the displayed string.
+- `lib/confirmation-gate.ts` — `evaluateConfirmationGate`, pure and side-effect free: phase, stored hash, draft validity, trusted pricing, recomputed hash. Ready for Day 7 to call first inside its transaction.
+- `app/api/chat/route.ts` — the summary replaces the model reply when the draft completes; an accepted order-relevant change clears the hash first; a question changes nothing and preserves phase and hash; `CANCEL_DRAFT` clears both; `CREATE_ORDER` is gated and answers neutrally either way.
+- `lib/templates.ts` — `CONFIRMATION_RECEIVED` / `CONFIRMATION_REJECTED`. Neither ever says created or placed.
+- `lib/system-prompt.ts` — confirmation-intent rules: نعم / oui / yes / wah / confirmi confirm; hmm, wait, maybe, questions and "yes, but make it 3" do not.
+- `scripts/unit.ts` — offline unit suite, `npm run test:unit`.
 
-All 8 are set in Vercel Production and mirrored in the local `.env`, which is
-git-ignored. `.env.example` holds placeholders only.
+## Environment (names only, never values)
+
+`DATABASE_URL`, `DIRECT_URL`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `DASHBOARD_PASSCODE`, `SESSION_SECRET`, `DEMO_AI_CALLS_PER_HOUR`, `DEMO_MAX_CUSTOMER_MESSAGES_PER_CONVERSATION`. All 8 are set in Vercel Production and mirrored in the git-ignored local `.env`.
 
 ## Known deviations
 
-- **FAILED AI rows store `content: null`.** Spec 4.1 step 10 implies the
-  customer-visible fallback text is persisted. We keep failed rows null so the
-  history loader (A-06) cannot pick up an error message as a real reply.
-- **`fallbackLanguage` is a heuristic**, not a language classifier. It uses a
-  small English word list for the generic error when Gemini failed.
-- **Digits-only or signal-free messages fall back to French**, the demo's
-  primary language.
-- **Catalog is fetched client-side** rather than server-rendered, for the
-  `cacheComponents` build reason above. Still database-backed and uncached.
-- **The chat response echoes the stored draft** under `__draft` so the scenario
-  runner can assert on it. It holds only allowlisted customer-supplied fields
-  for that conversation and never `rawAiOutput`.
-- **Gemini extracts, the backend decides.** The model may decline an invalid
-  option in its own words instead of sending it, so the localized rejection
-  template does not always fire; the invalid value is still never stored.
-- **Arabic wilaya spellings vary.** `resolveWilaya` retries once with
-  alef/ya/teh-marbuta collapsed, so `تيسمسيلت` and `تسمسيلت` both reach 38.
+- FAILED AI rows store `content: null` so the A-06 history loader cannot read an error message as a real reply. `fallbackLanguage` is a heuristic, not a classifier; digits-only messages fall back to French.
+- The chat response echoes `__draft`, `__hash`, `__gate` for the scenario runner. They hold only allowlisted customer fields, never `rawAiOutput`.
+- Gemini extracts, the backend decides: the model may decline an invalid option in its own words, so the rejection template does not always fire — the invalid value is still never stored.
+- Arabic wilaya spellings vary; `resolveWilaya` retries once with alef/ya/teh-marbuta collapsed, so `تيسمسيلت` and `تسمسيلت` both reach code 38.
+- A missing delivery fee cannot be forced through the public endpoint without mutating data, so it is covered by unit tests, not a live scenario.
 
-- **Region:** the Vercel project region is set to `fra1` (Frankfurt) to match the
-  Neon database in AWS eu-central-1. Confirm with `vercel project inspect`.
-- **DEMO_AI_CALLS_PER_HOUR was raised in Vercel for testing; the final value is
-  decided on Day 12** (A-10). Lower it before the judging window.
-- **Scenario runner:** `node scripts/scenarios.mjs <base-url>` runs the 24-check
-  suite. It stops with "cap or quota reached" instead of reporting a budget
-  limit as a test failure, and prints how many Gemini calls it made.
+## Gotchas
 
-## Gotchas found
+- Next 16 `cacheComponents` **rejects** the `dynamic` and `runtime` route exports; `maxDuration` is allowed. Prisma 7 needs `prisma.config.ts`, a generator `output`, a driver adapter and `dotenv`; CHECK constraints are raw SQL.
+- PowerShell mangles UTF-8 — use a Node `fetch` client for anything Arabic. A free-form `payload` object makes Gemini return `{}`; the nine keys must be enumerated and required-but-nullable.
+- `git commit -m` breaks on PowerShell with `\"` or `/api`; use `git commit -F`.
 
-- Next.js 16 `cacheComponents` **rejects** the `dynamic` and `runtime` route
-  segment exports; `maxDuration` is still allowed.
-- Prisma 7 needs `prisma.config.ts`, a generator `output`, a driver adapter and
-  `dotenv`; it no longer auto-loads `.env`. CHECK constraints are raw SQL.
-- PowerShell mangles UTF-8; use a Node `fetch` client for anything with Arabic.
-- A free-form `payload` object makes Gemini return `{}`. The nine keys must be
-  enumerated and required-but-nullable.
+## Operational notes
 
-## Commits
-
-`8c3c948` scaffold · `54f66dc` deployed page + SDKs · `7bacd5e` Prisma schema
-and first migration · `584c94b` CHECK constraints and seed · `0484235` wilaya
-allowlist and fees · `6f076ba` Day 3 Gemini service and `/api/chat` · `587033e`
-Day 3 language fixes · `cc3e7c5` Day 4 chat UI · `86b53ae` chat UX and design ·
-`3cb9b1a` Day 5 draft extraction and validation
+- **`DEMO_AI_CALLS_PER_HOUR` is raised in Vercel for testing. Lower it on Day 12** (A-10). Local runs override it at process level; `.env` is never edited or printed.
+- `npm run test:scenarios -- <base-url>` paces itself at ≥5 s between calls and ≤12 per rolling minute, stops immediately on a provider 429 or our own cap, and prints the number of Gemini calls made.
 
 ## Next steps
 
-1. **Day 6** — backend-generated order summary, localized, plus the SHA-256
-   confirmation hash bound to the exact normalized draft (A-09).
-2. **Day 7** — transactional order creation with an atomic stock decrement and
-   the single-use confirmation gate.
-3. **Day 9-11** — dashboard passcode, confirm/cancel, reset.
-4. Replace the dashboard passcode placeholder before judging.
+1. **Day 7** — transactional order creation: consume the gate with a single conditional `updateMany`, revalidate, decrement stock conditionally, create the order, roll everything back on failure.
+2. **Days 9-11** — dashboard passcode, confirm/cancel, reset.
+3. Replace the dashboard passcode placeholder before judging.
