@@ -1,4 +1,4 @@
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { chatRequestSchema } from "@/lib/gemini-schema";
 import { buildChatContext } from "@/lib/context";
@@ -8,11 +8,31 @@ import {
   RETRY_OVERHEAD_MS,
 } from "@/lib/gemini";
 import {
+  computeMissingFields,
+  mergeDraft,
+  type CatalogProduct,
+  type Draft,
+  type FieldError,
+} from "@/lib/draft";
+import {
+  ADDRESS_NOT_ALLOWED,
   CONVERSATION_LIMIT,
   DEMO_BUSY,
+  DRAFT_CANCELLED,
+  FIELD_LABELS,
   GENERIC_ERROR,
+  INVALID_ADDRESS,
+  INVALID_NAME,
+  INVALID_OPTION_NO_PRODUCT,
+  INVALID_PHONE,
+  INVALID_QUANTITY,
   INVALID_REQUEST,
+  INVALID_SIZE_OR_COLOR,
   MESSAGE_TOO_LONG,
+  PRODUCT_CHANGED,
+  PRODUCT_NOT_FOUND,
+  QUANTITY_TOO_HIGH,
+  UNKNOWN_WILAYA,
   type Language,
 } from "@/lib/templates";
 
@@ -188,7 +208,16 @@ export async function POST(request: Request) {
   });
 
   // --- Spec 4.1 step 5: context, catalog and stock read fresh each time ---
-  const context = await buildChatContext(prisma, business.id, conversation.id);
+  // The missing-field list sent to the model is computed before the model's own
+  // update (addendum A-05). It is recomputed after the merge for the response.
+  const currentDraft = (conversation.orderDraft ?? {}) as Draft;
+  const context = await buildChatContext(
+    prisma,
+    business.id,
+    conversation.id,
+    conversation.phase,
+    [],
+  );
 
   // --- Spec 4.1 step 6: AI row created BEFORE the call, as PENDING ---
   const aiRow = await prisma.message.create({
@@ -200,16 +229,31 @@ export async function POST(request: Request) {
     },
   });
 
+  // --- Load the current draft and compute the missing fields in the backend ---
+  const catalogProducts: CatalogProduct[] = context.catalog.map((p) => ({
+    id: p.id,
+    name: p.name,
+    priceDzd: p.priceDzd,
+    stockQuantity: p.stockQuantity,
+    sizes: p.sizes,
+    colors: p.colors,
+  }));
+  const missingBefore = computeMissingFields(currentDraft, catalogProducts);
+
+  const contextJson = JSON.stringify({
+    catalog: context.catalog,
+    business: context.business,
+    feeTable: context.feeTable,
+    deliveryConfig: context.deliveryConfig,
+    conversation: { id: conversation.id, draft: currentDraft, missingFields: missingBefore },
+    history: context.history,
+  });
+
   const outcome = await callGemini(
     message,
-    JSON.stringify({
-      catalog: context.catalog,
-      business: context.business,
-      deliveryConfig: context.deliveryConfig,
-      conversation: context.conversation,
-      history: context.history,
-    }),
+    contextJson,
     startedAt,
+    resolveLanguage(undefined, message),
   );
 
   // --- Spec 4.1 steps 9-10: persist the outcome, return safe UI state ---
@@ -242,35 +286,186 @@ export async function POST(request: Request) {
   }
 
   const language = resolveLanguage(outcome.data.language, message);
-  const reply = outcome.data.reply.trim();
+  const modelReply = outcome.data.reply.trim();
   const budget = PER_ATTEMPT_TIMEOUT_MS + RETRY_OVERHEAD_MS;
 
-  await prisma.message.update({
-    where: { id: aiRow.id },
-    data: {
-      content: reply,
-      aiCallStatus: "SUCCEEDED",
-      rawAiOutput: {
-        parsed: outcome.data,
-        attempts: outcome.attempts,
-        budget,
-      } as unknown as Prisma.InputJsonValue,
-    },
-  });
+  const action = outcome.data.action;
+  let reply = modelReply;
+  let draft = currentDraft;
+  let phase: string = conversation.phase;
 
-  return okJson({
-    conversationId: conversation.id,
-    reply,
-    // Safe UI state: the chat UI needs the language to render localized labels.
-    language,
-    phase: conversation.phase,
-    missingFields: [],
-    orderCreated: false,
-    limited: false,
-    limitReason: null,
-  });
+  const finish = async () => {
+    const missingFields = computeMissingFields(draft, catalogProducts);
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: {
+        orderDraft:
+          Object.keys(draft).length === 0
+            ? Prisma.JsonNull
+            : (draft as unknown as Prisma.InputJsonValue),
+        phase: phase as never,
+      },
+    });
+    await prisma.message.update({
+      where: { id: aiRow.id },
+      data: {
+        content: reply,
+        aiCallStatus: "SUCCEEDED",
+        rawAiOutput: {
+          parsed: outcome.data,
+          attempts: outcome.attempts,
+          budget,
+        } as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    return okJson({
+      conversationId: conversation.id,
+      reply,
+      // Safe UI state: the chat UI needs the language to render localized labels.
+      language,
+      phase,
+      missingFields,
+      orderCreated: false,
+      limited: false,
+      limitReason: null,
+      // Debug-safe echo of the stored draft. It contains only allowlisted
+      // customer-supplied fields and never rawAiOutput. Safe for the public
+      // endpoint because the draft is scoped to this conversation.
+      __draft: draft,
+    });
+  };
+
+  // --- CANCEL_DRAFT: clear the draft and the hash, return to IDLE ---
+  if (action.type === "CANCEL_DRAFT") {
+    draft = {};
+    phase = "IDLE";
+    reply = DRAFT_CANCELLED[language];
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: {
+        orderDraft: Prisma.DbNull,
+        confirmationHash: null,
+        phase: "IDLE",
+      },
+    });
+    await prisma.message.update({
+      where: { id: aiRow.id },
+      data: {
+        content: reply,
+        aiCallStatus: "SUCCEEDED",
+        rawAiOutput: { parsed: outcome.data, attempts: outcome.attempts, budget } as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return okJson({
+      conversationId: conversation.id,
+      reply,
+      language,
+      phase: "IDLE",
+      // The draft was cleared, so the backend now considers productId missing
+      // again. Recomputed from an empty draft rather than hardcoded.
+      missingFields: computeMissingFields({}, catalogProducts),
+      orderCreated: false,
+      limited: false,
+      limitReason: null,
+    });
+  }
+
+  // --- UPDATE_ORDER_DRAFT: validate every field against trusted data ---
+  if (action.type === "UPDATE_ORDER_DRAFT") {
+    // Strip nulls so the merge only sees fields the customer actually stated.
+    const stated: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(action.payload)) {
+      if (value !== null && value !== undefined && value !== "") {
+        stated[key] = value;
+      }
+    }
+    const merged = mergeDraft(currentDraft, stated, catalogProducts);
+    draft = merged.draft;
+    phase = "ORDER_COLLECTION";
+
+    const selected =
+      catalogProducts.find((p) => p.id === draft.productId) ?? null;
+
+    if (merged.errors.length > 0) {
+      // Spec 8.4: the backend message REPLACES the model reply.
+      reply = rejectionTemplate(merged.errors[0].reason, language, selected);
+    } else if (merged.productChangedAndCleared) {
+      // A-04 + A-08 template 13.11.
+      const missingLabels = computeMissingFields(draft, catalogProducts)
+        .map((f) => FIELD_LABELS[language][f] ?? f)
+        .join(language === "ar" ? "، " : ", ");
+      reply = PRODUCT_CHANGED[language].replace(
+        "{product}",
+        selected?.name ?? "",
+      ).replace("{missingList}", missingLabels);
+    }
+  }
+
+  return finish();
 }
 
 function geminiLanguage(value: string): Language | null {
   return value === "ar" || value === "fr" || value === "en" ? value : null;
+}
+
+/** A-08: a localized list of the selected product's real options. */
+function availableOptionsLabel(language: Language, product: CatalogProduct | null): string {
+  if (!product) return "";
+  const joiner = language === "ar" ? "، " : ", ";
+  const parts: string[] = [];
+  if (product.sizes.length > 0) {
+    parts.push(
+      `${FIELD_LABELS[language].size}: ${product.sizes.join(joiner)}`,
+    );
+  }
+  if (product.colors.length > 0) {
+    parts.push(
+      `${FIELD_LABELS[language].color}: ${product.colors.join(joiner)}`,
+    );
+  }
+  return parts.join(language === "ar" ? " / " : " / ");
+}
+
+/**
+ * Spec 8.4 rule 1 and A-08: when the backend rejects a field it replaces the
+ * model's reply entirely with the matching localized template. The first
+ * rejection wins so the customer sees one clear correction, not a pile of them.
+ */
+function rejectionTemplate(
+  reason: FieldError,
+  language: Language,
+  product: CatalogProduct | null,
+): string {
+  switch (reason) {
+    case "invalid-size":
+    case "invalid-color":
+      return product
+        ? INVALID_SIZE_OR_COLOR[language].replace(
+            "{availableOptions}",
+            availableOptionsLabel(language, product),
+          )
+        : INVALID_OPTION_NO_PRODUCT[language];
+    case "invalid-quantity":
+      return INVALID_QUANTITY[language];
+    case "quantity-too-high":
+      return QUANTITY_TOO_HIGH[language].replace(
+        "{stockQuantity}",
+        String(product?.stockQuantity ?? 0),
+      );
+    case "invalid-name":
+      return INVALID_NAME[language];
+    case "invalid-phone":
+      return INVALID_PHONE[language];
+    case "unknown-wilaya":
+      return UNKNOWN_WILAYA[language];
+    case "invalid-address":
+      return INVALID_ADDRESS[language];
+    case "address-not-allowed":
+      return ADDRESS_NOT_ALLOWED[language];
+    case "product-not-found":
+      return PRODUCT_NOT_FOUND[language];
+    default:
+      return GENERIC_ERROR[language];
+  }
 }

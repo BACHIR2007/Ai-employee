@@ -24,10 +24,28 @@ export type ChatRequest = z.infer<typeof chatRequestSchema>;
 
 // Spec 8.2: every valid model response has exactly this shape.
 // strict() rejects unknown top-level, action and payload fields.
+// Spec 8.3: the update payload may contain only these allowlisted keys, and
+// unknown keys are rejected rather than merged.
+// Every allowlisted key is required but nullable: null means "not mentioned in
+// the latest message" and is treated by the backend as "not provided".
+const draftPayloadSchema = z
+  .object({
+    productId: z.string().nullable(),
+    quantity: z.number().nullable(),
+    size: z.string().nullable(),
+    color: z.string().nullable(),
+    customerName: z.string().nullable(),
+    customerPhone: z.string().nullable(),
+    deliveryMethod: z.enum(["HOME", "OFFICE"]).nullable(),
+    wilaya: z.string().nullable(),
+    deliveryAddress: z.string().nullable(),
+  })
+  .strict();
+
 export const geminiActionSchema = z
   .object({
     type: z.enum(["NONE", "UPDATE_ORDER_DRAFT", "CANCEL_DRAFT", "CREATE_ORDER"]),
-    payload: z.record(z.string(), z.unknown()),
+    payload: z.union([draftPayloadSchema, z.record(z.string(), z.unknown())]),
   })
   .strict();
 

@@ -6,7 +6,11 @@
 
 import type { PrismaClient } from "../generated/prisma/client";
 import { WILAYAS } from "./wilayas";
-import { OFFICE_DELIVERY_FEE_DA, HOME_DELIVERY_SURCHARGE_DA } from "./delivery";
+import {
+  OFFICE_DELIVERY_FEE_DA,
+  HOME_DELIVERY_SURCHARGE_DA,
+  getDeliveryPrice,
+} from "./delivery";
 
 /** Spec 5.4 / 8.1: only the most recent 12 messages. */
 export const HISTORY_LIMIT = 12;
@@ -28,6 +32,13 @@ export type ChatContext = {
     homeSurchargeDzd: number;
     note: string;
   };
+  feeTable: {
+    code: number;
+    nameFr: string;
+    nameAr: string;
+    officeDzd: number | null;
+    homeDzd: number | null;
+  }[];
   conversation: {
     id: string;
     phase: string;
@@ -54,6 +65,21 @@ function buildDeliveryConfig() {
 }
 
 /**
+ * STEP 2B-a: the per-wilaya fee table, generated from lib/wilayas.ts and
+ * lib/delivery.ts so the two can never drift apart. The model quotes fees
+ * only from this table.
+ */
+export function buildFeeTable() {
+  return WILAYAS.map((w) => ({
+    code: w.code,
+    nameFr: w.nameFr,
+    nameAr: w.nameAr,
+    officeDzd: getDeliveryPrice(w.code, "OFFICE"),
+    homeDzd: getDeliveryPrice(w.code, "HOME"),
+  }));
+}
+
+/**
  * Reads the catalog fresh, then loads the bounded history.
  *
  * A-06: the history includes customer messages and AI rows with
@@ -64,6 +90,8 @@ export async function buildChatContext(
   prisma: PrismaClient,
   businessId: string,
   conversationId: string,
+  phase: string,
+  missingFields: string[],
 ): Promise<ChatContext> {
   const business = await prisma.business.findUniqueOrThrow({
     where: { id: businessId },
@@ -103,9 +131,8 @@ export async function buildChatContext(
       };
     }),
     deliveryConfig: buildDeliveryConfig(),
-    // Day 3 scope is product Q&A only: the phase stays IDLE and nothing is
-    // being collected, so the missing-fields list is empty.
-    conversation: { id: conversationId, phase: "IDLE", missingFields: [] },
+    feeTable: buildFeeTable(),
+    conversation: { id: conversationId, phase, missingFields },
     history: messages
       .map((m) => ({
         sender: m.senderType as "CUSTOMER" | "AI",

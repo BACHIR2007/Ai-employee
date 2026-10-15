@@ -159,6 +159,14 @@ export function normalizeWilayaText(input: string): string {
 const ALIASES: Record<string, number> = {
   // Chlef was officially renamed from El Asnam in 1980; still widely used.
   "el asnam": 2,
+  // Common spellings of Laghouat in Latin script.
+  aghouat: 3,
+  "laghouate": 3,
+  // Common Arabic spellings. Tissemsilt is written with or without the
+  // second ya, and Algerian customers often add the definite article.
+  "تيسمسيلت": 38,
+  "تسمسيلت": 38,
+  "ولاية تيسمسيلت": 38,
   // Common English and transliteration spellings.
   algiers: 16,
   wahran: 31,
@@ -219,6 +227,20 @@ export function resolveWilaya(input: string): Wilaya | null {
 
   const alias = ALIASES[normalized];
   if (alias !== undefined) return BY_CODE.get(alias) ?? null;
+
+  // Arabic spellings differ mainly by a missing or extra alef/ya, so retry
+  // once after collapsing those letters. This is a bounded fallback, not a
+  // fuzzy matcher: it only fires for a genuine miss and still requires an
+  // explicit alias to succeed.
+  const collapsed = (value: string) =>
+    value.replace(/[اويىه]/g, "").replace(/\s+/g, "");
+  const loose = collapsed(normalized);
+  if (loose.length > 0 && loose !== normalized) {
+    for (const w of WILAYAS) {
+      if (collapsed(normalizeWilayaText(w.nameFr)) === loose) return w;
+      if (collapsed(normalizeWilayaText(w.nameAr)) === loose) return w;
+    }
+  }
 
   return null;
 }

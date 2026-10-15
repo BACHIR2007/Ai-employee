@@ -65,9 +65,52 @@ function classify(err: unknown): "quota" | "timeout" | "auth" | "invalid-output"
   return "unknown";
 }
 
+const PAYLOAD_KEYS = [
+  "productId",
+  "quantity",
+  "size",
+  "color",
+  "customerName",
+  "customerPhone",
+  "deliveryMethod",
+  "wilaya",
+  "deliveryAddress",
+] as const;
+
 const RESPONSE_SCHEMA = {
   type: Type.OBJECT,
+  // Extraction first, wording second: the model fills the draft keys before it
+  // composes the reply.
+  propertyOrdering: ["action", "language", "reply"],
   properties: {
+    // Every allowlisted key is REQUIRED but NULLABLE. null means "the customer
+    // did not mention this in the latest message", which the backend treats as
+    // "not provided" and simply skips.
+    action: {
+      type: Type.OBJECT,
+      properties: {
+        type: {
+          type: Type.STRING,
+          enum: ["NONE", "UPDATE_ORDER_DRAFT", "CANCEL_DRAFT", "CREATE_ORDER"],
+        },
+        // Spec 8.3: the payload may only carry allowlisted order fields, and
+        // a free-form object makes the model return an empty payload. The
+        // schema therefore enumerates every permitted key explicitly.
+        payload: {
+          type: Type.OBJECT,
+          properties: Object.fromEntries(
+            PAYLOAD_KEYS.map((key) => [
+              key,
+              key === "quantity"
+                ? { type: Type.INTEGER, nullable: true }
+                : { type: Type.STRING, nullable: true },
+            ]),
+          ),
+          required: [...PAYLOAD_KEYS],
+        },
+      },
+      required: ["type", "payload"],
+    },
     language: {
       type: Type.STRING,
       enum: ["ar", "fr", "en"],
@@ -77,19 +120,8 @@ const RESPONSE_SCHEMA = {
       type: Type.STRING,
       description: "Short customer-facing reply, 1 to 3 sentences.",
     },
-    action: {
-      type: Type.OBJECT,
-      properties: {
-        type: {
-          type: Type.STRING,
-          enum: ["NONE", "UPDATE_ORDER_DRAFT", "CANCEL_DRAFT", "CREATE_ORDER"],
-        },
-        payload: { type: Type.OBJECT, additionalProperties: true },
-      },
-      required: ["type", "payload"],
-    },
   },
-  required: ["language", "reply", "action"],
+  required: ["action", "language", "reply"],
 } as const;
 
 /**
@@ -100,6 +132,7 @@ export async function callGemini(
   latestCustomerMessage: string,
   contextJson: string,
   requestStartedAt: number,
+  replyIn: "ar" | "fr" | "en",
 ): Promise<GeminiOutcome> {
   const apiKey = process.env.GEMINI_API_KEY;
   const model = process.env.GEMINI_MODEL;
@@ -127,7 +160,7 @@ export async function callGemini(
     try {
       const response = await ai.models.generateContent({
         model,
-        contents: `CONTEXT (JSON):\n${contextJson}\n\nCUSTOMER MESSAGE:\n${latestCustomerMessage}`,
+        contents: `CONTEXT (JSON):\n${contextJson}\n\nCUSTOMER MESSAGE:\n${latestCustomerMessage}\n\nReply in: ${replyIn}`,
         config: {
           systemInstruction: SYSTEM_PROMPT,
           temperature: 0,
