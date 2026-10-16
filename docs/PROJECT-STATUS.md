@@ -61,7 +61,7 @@ Next.js 16.4.0 (App Router, Turbopack, `cacheComponents`) · React 19.3.0 · Typ
 
 ## Operational notes
 
-- **`DEMO_AI_CALLS_PER_HOUR` is raised in Vercel for testing. Lower it on Day 12** (A-10). Local runs override it at process level; `.env` is never edited or printed.
+- **`DEMO_AI_CALLS_PER_HOUR` is configured in Vercel.** Its current value has not been read or verified from here, so nothing is claimed about the remaining allowance beyond the measured AI-row counts. Decide the final value on Day 12 (A-10). Local runs override it at process level; `.env` is never edited or printed.
 - `npm run test:scenarios -- <base-url>` paces itself at ≥5 s between calls and ≤12 per rolling minute, stops immediately on a provider 429 or our own cap, and prints the number of Gemini calls made.
 - **`npm run test:orders` writes real rows.** It creates Orders in the demo database and only ever adds them. Run `npm run test:restore-stock` afterwards to put stock back to the seed values; it never deletes an Order.
 - **The Order table holds 16 fake test Orders** from the Day 7 integration and scenario runs (name "Test Client", phone 0550123456). They are intentional evidence that the path works; the **Day 11 reset** is what clears them.

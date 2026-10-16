@@ -20,6 +20,15 @@ import {
   type TrustedPricing,
 } from "../lib/order-summary";
 import { evaluateConfirmationGate } from "../lib/confirmation-gate";
+import { normalizeWilayaText, resolveWilaya, WILAYAS } from "../lib/wilayas";
+import {
+  dominantScriptIsArabic,
+  explicitLanguageRequest,
+  replyInLabel,
+  replyInstruction,
+  resolveReplyLanguage,
+  storedLanguage,
+} from "../lib/language";
 import type { Draft } from "../lib/draft";
 import { getDeliveryPrice } from "../lib/delivery";
 
@@ -44,6 +53,13 @@ function eq(name: string, actual: unknown, expected: unknown) {
     Object.is(actual, expected),
     `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
   );
+}
+
+/** Structural comparison, for the cases that return plain objects. */
+function deepEq(name: string, actual: unknown, expected: unknown) {
+  const a = JSON.stringify(actual);
+  const b = JSON.stringify(expected);
+  check(name, a === b, `expected ${b}, got ${a}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -418,6 +434,196 @@ console.log("\n--- 3.2b summary determinism (no unnecessary regeneration) ---");
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+console.log("\n--- 3.3 reply language rules (Day 8) ---");
+// The Day 8 bug: the backend derived the language from SCRIPT only, so Latin
+// script always became "fr" and an English customer could never be answered in
+// English. The model now decides between en and fr for Latin script.
+
+{
+  // Spec 8.2: Arabic script -> ar, whatever the model says.
+  eq(
+    "Arabic script forces ar over a model label of fr",
+    resolveReplyLanguage({ modelLanguage: "fr", latest: "أريد تيشيرت" }),
+    "ar",
+  );
+  eq(
+    "Arabic script forces ar over a model label of en",
+    resolveReplyLanguage({ modelLanguage: "en", latest: "بكم الثمن؟" }),
+    "ar",
+  );
+
+  // The regression that mattered: English must win for English input.
+  eq(
+    "English input answered in English when the model says en",
+    resolveReplyLanguage({ modelLanguage: "en", latest: "I want 2 white sneakers size 42" }),
+    "en",
+  );
+  eq(
+    "English input answered in English (second phrasing)",
+    resolveReplyLanguage({ modelLanguage: "en", latest: "price of the jeans?" }),
+    "en",
+  );
+  eq(
+    "French input stays French",
+    resolveReplyLanguage({ modelLanguage: "fr", latest: "Je veux le t-shirt" }),
+    "fr",
+  );
+  eq(
+    "Latin-script Darija stays French",
+    resolveReplyLanguage({ modelLanguage: "fr", latest: "chkoun l3ayn dyal tshirt?" }),
+    "fr",
+  );
+
+  // A model that returns 'ar' for Latin script must NOT be trusted.
+  eq(
+    "model 'ar' is rejected for Latin script and falls back to the conversation",
+    resolveReplyLanguage({ modelLanguage: "ar", latest: "I want a t-shirt" }),
+    "fr",
+  );
+  eq(
+    "an unusable model label falls back to the conversation language",
+    resolveReplyLanguage({ modelLanguage: "zz", latest: "I want a t-shirt", conversationLanguage: "en" }),
+    "en",
+  );
+  eq(
+    "an unusable model label with no history falls back to fr",
+    resolveReplyLanguage({ modelLanguage: undefined, latest: "???" }),
+    "fr",
+  );
+
+  // Explicit requests win over the model.
+  eq(
+    "'answer me in English' wins over a model label of fr",
+    resolveReplyLanguage({ modelLanguage: "fr", latest: "actually answer me in English" }),
+    "en",
+  );
+  eq(
+    "'parlez en arabe' wins over a model label of en",
+    resolveReplyLanguage({ modelLanguage: "en", latest: "parlez en arabe" }),
+    "ar",
+  );
+  eq(
+    "an Arabic-script request to speak Arabic is detected",
+    explicitLanguageRequest("تكلم معي بالعربية"),
+    "ar",
+  );
+  eq(
+    "a normal Darija sentence is not a language request",
+    explicitLanguageRequest("أريد تيشيرت قطن بيول"),
+    undefined,
+  );
+  eq(
+    "a product name is not a language request",
+    explicitLanguageRequest("I want the T-shirt enfant"),
+    undefined,
+  );
+
+  // An explicitly requested language survives a terse follow-up.
+  eq(
+    "an explicit English switch survives a terse follow-up",
+    resolveReplyLanguage({
+      modelLanguage: "fr",
+      latest: "change the quantity to 1",
+      conversationLanguage: "en",
+      conversationLanguageExplicit: true,
+    }),
+    "en",
+  );
+  eq(
+    "without the explicit flag the model wins on a terse follow-up",
+    resolveReplyLanguage({
+      modelLanguage: "fr",
+      latest: "change the quantity to 1",
+      conversationLanguage: "en",
+      conversationLanguageExplicit: false,
+    }),
+    "fr",
+  );
+
+  // The prompt instruction must differ by script, and must never pin Latin
+  // script to a single language.
+  check(
+    "Arabic script pins the instruction to Arabic",
+    /set "language" to "ar"/i.test(replyInstruction("أريد تيشيرت")),
+  );
+  const latin = replyInstruction("I want a t-shirt");
+  check("Latin script asks the model to mirror the customer", latin.includes("SAME language"));
+  check("Latin script offers English", latin.includes('"en"'));
+  check("Latin script offers French for Darija", latin.includes('"fr"'));
+  check("Latin script never pins to French", !/answer in French\.$/.test(latin.trim()));
+
+  eq("replyIn label is ar for Arabic script", replyInLabel("أريد تيشيرت"), "ar");
+  eq("replyIn label is model for Latin script", replyInLabel("I want a t-shirt"), "model");
+
+  // storedLanguage round-trips through rawAiOutput.
+  deepEq(
+    "stored language round-trips",
+    storedLanguage({ resolvedLanguage: "en", languageExplicit: true }),
+    { language: "en", explicit: true },
+  );
+  deepEq(
+    "a row with no resolved language is not explicit",
+    storedLanguage({ parsed: {} }),
+    { explicit: false },
+  );
+  deepEq("a non-object row is handled", storedLanguage(null), { explicit: false });
+
+  // Dominant script, the rule Arabic decisions rest on.
+  eq("Arabic script detected", dominantScriptIsArabic("أريد تيشيرت"), true);
+  eq("Latin script not Arabic", dominantScriptIsArabic("I want a t-shirt"), false);
+  eq("digits only are not Arabic", dominantScriptIsArabic("0550123456"), false);
+  // A mostly-Latin message with one Arabic word must stay Latin.
+  eq("one Arabic word does not flip a Latin message", dominantScriptIsArabic("I want tishirt تيشيرت"), false);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n--- 3.4 wilaya name resolution (Day 8 article fix) ---");
+{
+  // The canonical Arabic names do not agree on the definite article, so both
+  // spellings have to resolve to the same wilaya.
+  eq("جلفة (no article) resolves", resolveWilaya("جلفة")?.code, 17);
+  eq("الجلفة (with article) resolves", resolveWilaya("الجلفة")?.code, 17);
+  eq("المسعد (article form of a bare name) resolves", resolveWilaya("المسعد")?.code, 66);
+  eq("مسعد (bare form) resolves", resolveWilaya("مسعد")?.code, 66);
+  eq(
+    "both spellings give the same canonical name",
+    resolveWilaya("جلفة")?.nameFr,
+    resolveWilaya("الجلفة")?.nameFr,
+  );
+
+  // Every canonical name must still resolve to itself, and the article-stripped
+  // keys must stay unique so no input can match two wilayas.
+  let tested = 0;
+  let failures = 0;
+  const strippedKeys = new Map<string, Set<number>>();
+  for (const w of WILAYAS) {
+    for (const input of [w.nameFr, w.nameAr, String(w.code), String(w.code).padStart(2, "0")]) {
+      tested += 1;
+      const r = resolveWilaya(input);
+      if (!r || r.code !== w.code) failures += 1;
+    }
+    for (const name of [w.nameFr, w.nameAr]) {
+      const key = normalizeWilayaText(name).replace(/^ال/, "").replace(/[اويىه]/g, "").replace(/\s+/g, "");
+      if (!strippedKeys.has(key)) strippedKeys.set(key, new Set());
+      strippedKeys.get(key)!.add(w.code);
+    }
+  }
+  eq("all canonical name/code inputs resolve", failures, 0);
+  check("all 276 inputs were tested", tested === WILAYAS.length * 4, `tested=${tested}`);
+  const ambiguous = [...strippedKeys.entries()].filter(([, codes]) => codes.size > 1);
+  eq("no article-stripped key matches two wilayas", ambiguous.length, 0);
+  eq(
+    "article-stripped keys stay distinct",
+    strippedKeys.size,
+    WILAYAS.length * 2,
+  );
+
+  // A genuinely unknown name is still refused.
+  eq("an invented wilaya is still refused", resolveWilaya("Atlantis"), null);
+  eq("nonsense Arabic is still refused", resolveWilaya("ولاية غير موجودة"), null);
+}
+
 console.log(`\n=============== UNIT TEST SUMMARY ===============`);
 console.log(`${passed}/${passed + failed} checks passed${failed ? `, ${failed} FAILED` : ""}`);
 for (const f of failures) console.log(`  FAILED: ${f}`);

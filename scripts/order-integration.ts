@@ -100,6 +100,20 @@ type Snapshot = {
   otherStock: number;
 };
 
+/**
+ * One entry per case that could move stock, so case 10 can prove that every
+ * drop is explained by an Order that case created.
+ */
+type LedgerEntry = {
+  label: string;
+  orderIds: string[];
+  /** productId -> stock drop measured inside the case. */
+  drops: Record<string, number>;
+  /** productId -> product name, for readable assertion messages. */
+  names: Record<string, string>;
+};
+const LEDGER: LedgerEntry[] = [];
+
 async function snap(): Promise<Snapshot> {
   const [orders, low, other] = await Promise.all([
     prisma.order.count(),
@@ -107,6 +121,19 @@ async function snap(): Promise<Snapshot> {
     prisma.product.findUniqueOrThrow({ where: { id: otherId } }),
   ]);
   return { orders, stock: low.stockQuantity, otherStock: other.stockQuantity };
+}
+
+/** Records a case's stock movement against the Orders it created. */
+function recordCase(label: string, before: Snapshot, after: Snapshot, orderIds: string[]) {
+  LEDGER.push({
+    label,
+    orderIds,
+    drops: {
+      [lowId]: before.stock - after.stock,
+      [otherId]: before.otherStock - after.otherStock,
+    },
+    names: { [lowId]: LOW_STOCK, [otherId]: OTHER },
+  });
 }
 
 /** Puts the conversation into AWAITING_CONFIRMATION with a valid hash. */
@@ -213,6 +240,7 @@ async function main() {
     eq("phase returned to IDLE", st.phase, "IDLE");
     eq("confirmation hash cleared", st.hash, null);
     check("orderDraft cleared", !st.hasDraft, JSON.stringify(st.draft));
+    recordCase("1 success", before, after, [created.orderId]);
   }
 
   // ------------------------------------------------- 2. CALLED TWICE (serial)
@@ -240,6 +268,7 @@ async function main() {
     );
     eq("phase is IDLE after the second call", st.phase, "IDLE");
     eq("hash still cleared", st.hash, null);
+    recordCase("2 called twice", before, after, [first.orderId]);
   }
 
   // ------------------------------------------- 3. TWO CONCURRENT CALLS
@@ -272,6 +301,8 @@ async function main() {
     eq("phase is IDLE after the race", st.phase, "IDLE");
     eq("hash still cleared after the race", st.hash, null);
     check("stock still not negative", after.stock >= 0, `stock=${after.stock}`);
+    const winner = fulfilled[0] as PromiseFulfilledResult<{ orderId: string }>;
+    recordCase("3 concurrent", before, after, [winner.value.orderId]);
   }
 
   // ------------------------------------------- 4. STOCK INSUFFICIENT AT CREATION
@@ -450,6 +481,67 @@ async function main() {
     eq("unit price is the other product's price", order.unitPrice.toString(), otherPrice);
     eq("the low-stock product untouched", after.stock, before.stock);
     eq("the other product decreased by one", before.otherStock - after.otherStock, 1);
+    recordCase("9 HOME delivery", before, after, [created.orderId]);
+  }
+
+  // ------------------------------------------------- 10. STOCK RECONCILIATION
+  // The headline invariant: for EVERY product, the stock drop across this run
+  // equals exactly the sum of the quantities of the Orders this run created.
+  // A silent extra decrement, or a decrement with no Order, fails here.
+  console.log("\n--- 10. per-product stock reconciles with the Orders created ---");
+  {
+    // The reconciliation is PER CASE, not per run: resetFixtures() deliberately
+    // returns stock to the seed value between cases, so a whole-run comparison
+    // against the starting snapshot would be measuring the resets, not the
+    // order logic. Each case therefore recorded its own ledger entry.
+    let ordersSeen = 0;
+    let unitsSeen = 0;
+    for (const entry of LEDGER) {
+      const rows = await prisma.order.findMany({
+        where: { id: { in: entry.orderIds } },
+        select: { productId: true, quantity: true },
+      });
+      ordersSeen += rows.length;
+      unitsSeen += rows.reduce((a, o) => a + o.quantity, 0);
+
+      // Expected drop per product, from the Orders this case created.
+      const expected = new Map<string, number>();
+      for (const o of rows) {
+        expected.set(o.productId, (expected.get(o.productId) ?? 0) + o.quantity);
+      }
+      const actual = new Map<string, number>();
+      for (const [key, drop] of Object.entries(entry.drops)) {
+        actual.set(key, drop);
+      }
+      for (const [productId, quantity] of expected) {
+        const name = entry.names[productId] ?? productId;
+        eq(
+          `${entry.label}: stock drop for ${name} equals the ordered quantity (${quantity})`,
+          actual.get(productId) ?? 0,
+          quantity,
+        );
+      }
+      // No product may move unless this case ordered from it.
+      for (const [productId, drop] of actual) {
+        if (!expected.has(productId)) {
+          eq(
+            `${entry.label}: no stock movement for an unordered product`,
+            drop,
+            0,
+          );
+        }
+      }
+    }
+    console.log(
+      `  reconciled ${LEDGER.length} cases, ${ordersSeen} Orders, ${unitsSeen} units`,
+    );
+    check("at least one case created an order", ordersSeen > 0, `orders=${ordersSeen}`);
+
+    for (const p of await prisma.product.findMany({
+      select: { name: true, stockQuantity: true },
+    })) {
+      check(`stock for ${p.name} is not negative`, p.stockQuantity >= 0, `stock=${p.stockQuantity}`);
+    }
   }
 
   console.log(`\n=============== ORDER INTEGRATION SUMMARY ===============`);

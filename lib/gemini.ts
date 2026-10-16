@@ -132,7 +132,7 @@ export async function callGemini(
   latestCustomerMessage: string,
   contextJson: string,
   requestStartedAt: number,
-  replyIn: "ar" | "fr" | "en",
+  replyInstruction: string,
 ): Promise<GeminiOutcome> {
   const apiKey = process.env.GEMINI_API_KEY;
   const model = process.env.GEMINI_MODEL;
@@ -160,7 +160,7 @@ export async function callGemini(
     try {
       const response = await ai.models.generateContent({
         model,
-        contents: `CONTEXT (JSON):\n${contextJson}\n\nCUSTOMER MESSAGE:\n${latestCustomerMessage}\n\nReply in: ${replyIn}`,
+        contents: `CONTEXT (JSON):\n${contextJson}\n\nCUSTOMER MESSAGE:\n${latestCustomerMessage}\n\n${replyInstruction}`,
         config: {
           systemInstruction: SYSTEM_PROMPT,
           temperature: 0,

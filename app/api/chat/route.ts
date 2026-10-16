@@ -16,6 +16,14 @@ import {
 } from "@/lib/draft";
 import { prepareOrder } from "@/lib/order-summary";
 import {
+  dominantScriptIsArabic,
+  explicitLanguageRequest,
+  replyInLabel,
+  replyInstruction,
+  resolveReplyLanguage,
+  storedLanguage,
+} from "@/lib/language";
+import {
   createOrderFromConfirmedDraft,
   loadTrustedCatalog,
   OrderCreationError,
@@ -87,86 +95,6 @@ function looksEnglish(text: string): boolean {
 function fallbackLanguage(latest: string): Language {
   if (dominantScriptIsArabic(latest)) return "ar";
   return looksEnglish(latest) ? "en" : "fr";
-}
-
-/**
- * Spec 8.2: "for unclear mixed Arabic/French, prefer the dominant script".
- * Counts Arabic-script vs Latin letters so a mostly-English message that
- * merely contains one Arabic word is not forced to Arabic.
- */
-function dominantScriptIsArabic(text: string): boolean {
-  let arabic = 0;
-  let latin = 0;
-  for (const ch of text) {
-    const code = ch.codePointAt(0) ?? 0;
-    if (code >= 0x0600 && code <= 0x06ff) arabic += 1;
-    else if (
-      (code >= 0x41 && code <= 0x5a) || // A-Z
-      (code >= 0x61 && code <= 0x7a) // a-z
-    ) {
-      latin += 1;
-    }
-  }
-  return arabic > 0 && arabic >= latin;
-}
-
-/**
- * Explicit "speak language X" requests. This is deliberately narrow: it only
- * recognises a customer naming a language, so it cannot fire on product names,
- * quantities or addresses. The demo catalogue is French, and no product,
- * wilaya or field label contains any of these words.
- */
-const LANGUAGE_REQUEST_MARKERS: Array<{ language: Language; re: RegExp }> = [
-  {
-    language: "ar",
-    re: /\b(arabic|arabe)\b|parl[ea]z?\s+en\s+arabe|répondez\s+en\s+arabe|بالعربية|بالعربي\b/i,
-  },
-  {
-    language: "en",
-    re: /\benglish\b|parl[ea]z?\s+en\s+anglais|répondez\s+en\s+anglais|بالانجليزية|بالإنجليزية/i,
-  },
-  {
-    language: "fr",
-    re: /\bfrench\b|français|parl[ea]z?\s+en\s+français|répondez\s+en\s+français|بالفرنسية/i,
-  },
-];
-
-/**
- * Spec 8.2 rule 1: "Arabic script, including Darija written in Arabic script"
- * is ar. Gemini sometimes returns "fr" for a message written in Arabic script,
- * so script evidence is applied before the model's own label.
- *
- * `conversationLanguage` is the language the backend itself used for the
- * previous reply, stored on the AI row. It makes the choice sticky: once a
- * customer has asked for English, the next order summary is shown in English
- * too. Without it a terse follow-up such as "change the quantity to 1" is
- * re-classified by the model on its own and silently reverts the conversation.
- *
- * Two things still override it, so a customer is never trapped: Arabic script
- * in the current message, and an explicit request naming another language.
- */
-function resolveLanguage(
-  modelValue: string | undefined,
-  latest: string,
-  conversationLanguage?: Language,
-): Language {
-  if (dominantScriptIsArabic(latest)) return "ar";
-
-  for (const marker of LANGUAGE_REQUEST_MARKERS) {
-    if (marker.re.test(latest)) return marker.language;
-  }
-
-  return conversationLanguage ?? geminiLanguage(modelValue ?? "") ?? "fr";
-}
-
-/**
- * The backend-resolved language recorded on a previous AI row, if any.
- * This is our own decision, not the model's, so it is authoritative.
- */
-function storedLanguage(raw: unknown): Language | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const value = (raw as { resolvedLanguage?: unknown }).resolvedLanguage;
-  return value === "ar" || value === "fr" || value === "en" ? value : undefined;
 }
 
 /**
@@ -373,7 +301,9 @@ export async function POST(request: Request) {
     orderBy: { createdAt: "desc" },
     select: { rawAiOutput: true },
   });
-  const conversationLanguage = storedLanguage(lastAssistant?.rawAiOutput ?? null);
+  const stored = storedLanguage(lastAssistant?.rawAiOutput ?? null);
+  const conversationLanguage = stored.language;
+  const conversationLanguageExplicit = stored.explicit;
 
   // --- Limits: per-conversation and global hourly (spec 9.1, A-06/A-10) ---
   const maxPerConversation = Number(process.env.DEMO_MAX_CUSTOMER_MESSAGES_PER_CONVERSATION ?? 40);
@@ -460,12 +390,11 @@ export async function POST(request: Request) {
     history: context.history,
   });
 
-  const outcome = await callGemini(
-    message,
-    contextJson,
-    startedAt,
-    resolveLanguage(undefined, message),
-  );
+  // Recorded as a debug aid (A-06). "ar" when the backend decides from script,
+  // "model" when the model is left to tell English from French and Darija.
+  const replyIn = replyInLabel(message);
+
+  const outcome = await callGemini(message, contextJson, startedAt, replyInstruction(message));
 
   // --- Spec 4.1 steps 9-10: persist the outcome, return safe UI state ---
   if (!outcome.ok) {
@@ -496,7 +425,17 @@ export async function POST(request: Request) {
     });
   }
 
-  const language = resolveLanguage(outcome.data.language, message, conversationLanguage);
+  const language = resolveReplyLanguage({
+    modelLanguage: outcome.data.language,
+    latest: message,
+    conversationLanguage,
+    conversationLanguageExplicit,
+  });
+  // True when the customer named the language in this message, or wrote in
+  // Arabic script. Recorded so the next turn can honour a deliberate switch over
+  // the model's per-message guess.
+  const languageExplicit =
+    explicitLanguageRequest(message) !== undefined || dominantScriptIsArabic(message);
   const modelReply = outcome.data.reply.trim();
   const budget = PER_ATTEMPT_TIMEOUT_MS + RETRY_OVERHEAD_MS;
 
@@ -544,7 +483,7 @@ export async function POST(request: Request) {
         aiCallStatus: "SUCCEEDED",
         rawAiOutput: {
           parsed: outcome.data,
-          resolvedLanguage: language,
+          resolvedLanguage: language, languageExplicit, replyIn,
           attempts: outcome.attempts,
           budget,
         } as unknown as Prisma.InputJsonValue,
@@ -587,7 +526,7 @@ export async function POST(request: Request) {
       data: {
         content: reply,
         aiCallStatus: "SUCCEEDED",
-        rawAiOutput: { parsed: outcome.data, resolvedLanguage: language, attempts: outcome.attempts, budget } as unknown as Prisma.InputJsonValue,
+        rawAiOutput: { parsed: outcome.data, resolvedLanguage: language, languageExplicit, replyIn, attempts: outcome.attempts, budget } as unknown as Prisma.InputJsonValue,
       },
     });
     return okJson({
@@ -702,10 +641,6 @@ function sameDraft(a: Draft, b: Draft): boolean {
     deliveryAddress: d.deliveryAddress ?? null,
   });
   return JSON.stringify(pick(a)) === JSON.stringify(pick(b));
-}
-
-function geminiLanguage(value: string): Language | null {
-  return value === "ar" || value === "fr" || value === "en" ? value : null;
 }
 
 /** A-08: a localized list of the selected product's real options. */

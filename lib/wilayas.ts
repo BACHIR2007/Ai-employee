@@ -242,5 +242,23 @@ export function resolveWilaya(input: string): Wilaya | null {
     }
   }
 
+  // The canonical Arabic names do not agree on the definite article: some
+  // carry it (الجلفة) and some do not (مسعد), so a customer who writes the
+  // other form is told the wilaya does not exist. Drop a leading "ال" on both
+  // sides of the comparison.
+  //
+  // This is still bounded and unambiguous: collapsing the letters and then
+  // stripping the article yields 138 distinct keys from the 138 wilaya names,
+  // so a stripped key can match at most one wilaya. Verified in
+  // scripts/wilaya-audit.ts and by the unit tests.
+  const stripped = (value: string) => collapsed(value.replace(/^ال/, ""));
+  const looseKey = stripped(normalized);
+  if (looseKey.length > 0) {
+    for (const w of WILAYAS) {
+      if (stripped(normalizeWilayaText(w.nameFr)) === looseKey) return w;
+      if (stripped(normalizeWilayaText(w.nameAr)) === looseKey) return w;
+    }
+  }
+
   return null;
 }
