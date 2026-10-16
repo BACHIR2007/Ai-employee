@@ -184,11 +184,18 @@ async function run() {
   }
 
   let calls = 0;
+  /** Every turn's resolved language, in order, so a scenario can assert on ALL of them. */
+  const LANGUAGES = [];
+  /** Index into LANGUAGES, so a multi-turn scenario can slice its own turns. */
+  const mark = () => LANGUAGES.length;
+  const langsSince = (i) => LANGUAGES.slice(i);
+
   async function turn(label, cid, message) {
     await pace();
     calls += 1;
     const r = await chat(cid, message);
     assertBudget(r);
+    LANGUAGES.push(r.language);
     console.log(`\n  [${label}] customer: ${message}`);
     console.log(`    reply   : ${r.reply}`);
     console.log(
@@ -1053,6 +1060,7 @@ async function run() {
 
   // 102. The same order collected STEP BY STEP, Arabic script.
   if (want(102)) {
+    const from = mark();
     let r = await turn("102 ar step a", null, "أريد التيشيرت قطن بيول");
     const cid = r.conversationId;
     await turn("102 ar step b", cid, "مقاس L");
@@ -1063,11 +1071,14 @@ async function run() {
     await turn("102 ar step g", cid, "التوصيل إلى مكتب التوصيل");
     r = await turn("102 ar step h", cid, "الولاية تيسمسيلت");
     note(r);
+    const all = langsSince(from);
+    const wrong = all.filter((l) => l !== "ar").length;
     record(
       "102 ar: step-by-step order",
-      "lang=ar throughout, backend Arabic summary, hash set",
-      `${r.language} | ${r.reply.slice(0, 70)}`,
-      r.language === "ar" &&
+      "ALL 8 turns answered in Arabic, backend Arabic summary, hash set",
+      `turnLanguages=${all.join(",")} | ${r.reply.slice(0, 60)}`,
+      wrong === 0 &&
+        all.length === 8 &&
         r.phase === "AWAITING_CONFIRMATION" &&
         hasHash(r) &&
         SUMMARY_SHAPE.ar.total("4200").test(r.reply) &&
@@ -1187,6 +1198,7 @@ async function run() {
 
   // 108. Latin-script Darija, step by step.
   if (want(108)) {
+    const from = mark();
     let r = await turn("108 darija step a", null, "khayb T-shirt coton bio");
     const cid = r.conversationId;
     await turn("108 darija step b", cid, "taille L");
@@ -1197,11 +1209,16 @@ async function run() {
     await turn("108 darija step g", cid, "livraison bureau");
     r = await turn("108 darija step h", cid, "wilaya Tissemsilt");
     note(r);
+    // EVERY turn must be French. Checking only the last turn hid a real
+    // regression where short Darija turns came back as English.
+    const all = langsSince(from);
+    const wrong = all.map((l, i) => (l === "fr" ? null : `#${i + 1}=${l}`)).filter(Boolean);
     record(
       "108 darija: step-by-step order",
-      "lang=fr throughout, backend French summary, hash set",
-      `${r.language} | ${r.reply.slice(0, 70)}`,
-      r.language === "fr" &&
+      "ALL 8 turns answered in French, backend French summary, hash set",
+      `turnLanguages=${all.join(",")} | ${r.reply.slice(0, 60)}`,
+      wrong.length === 0 &&
+        all.length === 8 &&
         r.phase === "AWAITING_CONFIRMATION" &&
         hasHash(r) &&
         SUMMARY_SHAPE.fr.total("4200").test(r.reply),
@@ -1437,6 +1454,7 @@ async function run() {
 
   // 120. English, step by step.
   if (want(120)) {
+    const from = mark();
     let r = await turn("120 en step a", null, "I want the T-shirt coton bio");
     const cid = r.conversationId;
     await turn("120 en step b", cid, "size L");
@@ -1447,15 +1465,67 @@ async function run() {
     await turn("120 en step g", cid, "delivery to the office");
     r = await turn("120 en step h", cid, "wilaya Tissemsilt");
     note(r);
+    const all = langsSince(from);
+    const wrong = all.filter((l) => l !== "en").length;
     record(
       "120 en: step-by-step order",
-      "lang=en throughout, backend English summary, hash set",
-      `${r.language} | ${r.reply.slice(0, 70)}`,
-      r.language === "en" &&
+      "ALL 8 turns answered in English, backend English summary, hash set",
+      `turnLanguages=${all.join(",")} | ${r.reply.slice(0, 60)}`,
+      wrong === 0 &&
+        all.length === 8 &&
         r.phase === "AWAITING_CONFIRMATION" &&
         hasHash(r) &&
         SUMMARY_SHAPE.en.total("4200").test(r.reply) &&
         r.reply.includes("delivery office"),
+    );
+  }
+
+  // 121. Out-of-stock RACE through the real API.
+  // Two independent conversations each collect quantity 2 of jeans homme, whose
+  // stock is 3. The first confirmation takes the stock down to 1; the second
+  // must then be refused with 13.3, create nothing, and keep its draft.
+  if (want(121)) {
+    const orderJeans =
+      `I want the jeans homme, size M, colour Blanc, quantity 2 for ${FAKE_NAME}, phone ${FAKE_PHONE}, delivery to the office, wilaya Tissemsilt`;
+
+    const a = await turn("121 race conv A order", null, orderJeans);
+    const b = await turn("121 race conv B order", null, orderJeans);
+    const bothSummarised =
+      a.phase === "AWAITING_CONFIRMATION" &&
+      b.phase === "AWAITING_CONFIRMATION" &&
+      hasHash(a) &&
+      hasHash(b) &&
+      (a.__draft ?? {}).quantity === 2 &&
+      (b.__draft ?? {}).quantity === 2;
+
+    const first = await turn("121 race conv A confirm", a.conversationId, "oui je confirme");
+    note(first, isTemplate(first, "ORDER_CREATED") ? "13.2 ORDER_CREATED" : "model reply");
+
+    const second = await turn("121 race conv B confirm", b.conversationId, "oui je confirme");
+    note(second, isTemplate(second, "ORDER_OUT_OF_STOCK") ? "13.3 ORDER_OUT_OF_STOCK" : "model reply");
+
+    // The loser keeps its draft and its phase, so the customer can change the
+    // quantity and try again rather than losing the order.
+    const loserKeptDraft =
+      (second.__draft ?? {}).quantity === 2 &&
+      second.phase === "AWAITING_CONFIRMATION" &&
+      typeof second.__hash === "string";
+    // 13.3 must state the order was NOT created.
+    const saysNotCreated =
+      /not created|pas été enregistrée|لم يتم تسجيل الطلب/i.test(second.reply) ||
+      isTemplate(second, "ORDER_OUT_OF_STOCK");
+
+    record(
+      "121 race: second confirmation after the stock is gone",
+      "both summarise; first creates ONE order; second gets 13.3, creates nothing, keeps its draft",
+      `bothSummarised=${bothSummarised} first=${first.orderCreated} second=${second.orderCreated} gate=${second.__gate} | ${second.reply.slice(0, 70)}`,
+      bothSummarised &&
+        first.orderCreated === true &&
+        isTemplate(first, "ORDER_CREATED") &&
+        second.orderCreated === false &&
+        second.__gate !== "created" &&
+        loserKeptDraft &&
+        saysNotCreated,
     );
   }
 

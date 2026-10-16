@@ -78,7 +78,9 @@ export function replyInstruction(latest: string): string {
   return (
     "LANGUAGE: answer in the SAME language the customer used in the message above. " +
     'If the customer wrote in English, answer in English and set "language" to "en". ' +
-    'If the customer wrote in French or in Latin-script Darija, answer in French and set "language" to "fr". ' +
+    'If the customer wrote in French or in Latin-script Darija (Algerian Arabic written ' +
+    'with Latin letters, such as "bghit", "wach kayen", "n7eb ndir"), answer in French and ' +
+    'set "language" to "fr". ' +
     "Match the customer's language exactly; do not switch to another one."
   );
 }
