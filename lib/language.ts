@@ -18,12 +18,21 @@ import type { Language } from "./templates";
  * Spec 8.2: "for unclear mixed Arabic/French, prefer the dominant script".
  * Counts Arabic-script vs Latin letters so a mostly-English message that
  * merely contains one Arabic word is not forced to Arabic.
+ *
+ * Arabic-INDIC DIGITS are deliberately not counted. They sit in the Arabic
+ * Unicode block (U+0660-U+0669 and U+06F0-U+06F9) but carry no language, so
+ * "phone 0550123456" written with them must not drag an English or French
+ * sentence into Arabic.
  */
 export function dominantScriptIsArabic(text: string): boolean {
   let arabic = 0;
   let latin = 0;
   for (const ch of text) {
     const code = ch.codePointAt(0) ?? 0;
+    // Arabic-Indic and Extended Arabic-Indic digits: language-neutral.
+    if ((code >= 0x0660 && code <= 0x0669) || (code >= 0x06f0 && code <= 0x06f9)) {
+      continue;
+    }
     if (code >= 0x0600 && code <= 0x06ff) arabic += 1;
     else if (
       (code >= 0x41 && code <= 0x5a) || // A-Z

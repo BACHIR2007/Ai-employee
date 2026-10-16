@@ -575,6 +575,24 @@ console.log("\n--- 3.3 reply language rules (Day 8) ---");
   eq("digits only are not Arabic", dominantScriptIsArabic("0550123456"), false);
   // A mostly-Latin message with one Arabic word must stay Latin.
   eq("one Arabic word does not flip a Latin message", dominantScriptIsArabic("I want tishirt تيشيرت"), false);
+
+  // Arabic-Indic DIGITS are language-neutral and must not force Arabic.
+  eq("Arabic-Indic digits do not force Arabic", dominantScriptIsArabic("phone ٠٥٥٠١٢٣٤٥٦"), false);
+  eq("Arabic-Indic digits in a French sentence stay Latin", dominantScriptIsArabic("mon numéro est ٠٥٥٠١٢٣٤٥٦"), false);
+  eq("Extended Arabic-Indic digits do not force Arabic", dominantScriptIsArabic("phone ۰۵۵۰۱۲۳۴۵۶"), false);
+  // ...but real Arabic text with digits still counts as Arabic.
+  eq("Arabic text with Arabic-Indic digits is Arabic", dominantScriptIsArabic("رقمي ٠٥٥٠١٢٣٤٥٦"), true);
+  // The reply language follows the script, so the digits case must stay en/fr.
+  eq(
+    "English sentence with Arabic-Indic digits is answered in English",
+    resolveReplyLanguage({ modelLanguage: "en", latest: "phone ٠٥٥٠١٢٣٤٥٦" }),
+    "en",
+  );
+  eq(
+    "French sentence with Arabic-Indic digits is answered in French",
+    resolveReplyLanguage({ modelLanguage: "fr", latest: "mon numéro ٠٥٥٠١٢٣٤٥٦" }),
+    "fr",
+  );
 }
 
 // ---------------------------------------------------------------------------
