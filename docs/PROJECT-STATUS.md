@@ -66,6 +66,9 @@ Next.js 16.4.0 (App Router, Turbopack, `cacheComponents`) · React 19.3.0 · Typ
 - **`npm run test:orders` writes real rows.** It creates Orders in the demo database and only ever adds them. Run `npm run test:restore-stock` afterwards to put stock back to the seed values; it never deletes an Order.
 - **The Order table holds 16 fake test Orders** from the Day 7 integration and scenario runs (name "Test Client", phone 0550123456). They are intentional evidence that the path works; the **Day 11 reset** is what clears them.
 - A stale `next start` can keep holding port 4200 and silently serve an OLD build, which looks exactly like a code fix that did nothing. Always check the port owner before a run.
+- **The local app and the deployed app share one Neon database, so they share the hourly AI budget.** A local scenario run spends the deployed app's `DEMO_AI_CALLS_PER_HOUR` allowance. Run local suites and then deployed checks with an hour between them, or raise the cap first.
+- The cap is checked BEFORE Gemini is called, so probing `POST /api/chat` to ask whether the budget is left costs **zero** Gemini calls.
+- The deployed app's public URL is `https://ai-employee-lovat.vercel.app`. The per-deployment `*.vercel.app` URLs sit behind SSO and return a 302 to a login page.
 
 ## Test commands
 
