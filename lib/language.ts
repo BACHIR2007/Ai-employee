@@ -77,6 +77,9 @@ export function replyInstruction(latest: string): string {
   }
   return (
     "LANGUAGE: answer in the SAME language the customer used in the message above. " +
+    "If the conversation history is already in one language, keep replying in that " +
+    "language; one short turn does not switch the conversation, and borrowed words " +
+    'such as "quantity" or "size" are not a language switch. ' +
     'If the customer wrote in English, answer in English and set "language" to "en". ' +
     'If the customer wrote in French or in Latin-script Darija (Algerian Arabic written ' +
     'with Latin letters, such as "bghit", "wach kayen", "n7eb ndir"), answer in French and ' +
