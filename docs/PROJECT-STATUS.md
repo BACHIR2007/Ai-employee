@@ -82,6 +82,7 @@ Verified: unit 189/189, integration 79/79, reset 39/39, HTTP reset 48/48, caps 2
 - **The local app and the deployed app share one Neon database**, so local runs spend the deployed hourly allowance.
 - Next appends its own RSC tokens to `Vary`, so assert `Cookie` is *in* the header rather than equal to it. Under `cacheComponents`, Prisma in a page needs `await io()` inside a `<Suspense>` boundary, and `next/font` puts the family names only in the generated CSS, so a font assertion must read the stylesheet.
 - `react-hooks/set-state-in-effect` rejects a plain fetch-on-mount. Deferring the first load with `setTimeout(…, 0)` keeps it a data fetch instead of a render-phase state change.
+- **Log lines: Vercel → the project → Logs → Runtime Logs.** Filter `event=admin_login`. Outcomes: `success` (a valid session was issued), `mismatch` (the submitted passcode was wrong), `not_configured` (`DASHBOARD_PASSCODE` or `SESSION_SECRET` is missing or below its minimum, so login fails closed), `bad_origin` (the Origin did not match the host), `bad_body` (the JSON was malformed or `passcode` was missing/too long). Nothing secret is logged: only the outcome and the duration.
 - Playwright installs **outside** the repo (`npm install playwright --prefix %TEMP%\opencode\pw`, then `npx --prefix ... playwright install chromium`) and is driven with `require()` on its module path. A hidden tabbed panel reports `clientHeight` 0, so switch tabs before measuring.
 - **Never run a Gemini scenario in parallel with another suite.** `scripts/order-integration.ts` deliberately changes a product price to exercise A-09, which makes a concurrent confirmation return `price-changed` instead of creating the order. Run suites sequentially, and restore stock first if a previous run consumed it.
 
@@ -89,7 +90,7 @@ Verified: unit 189/189, integration 79/79, reset 39/39, HTTP reset 48/48, caps 2
 
 - **`DEMO_AI_CALLS_PER_HOUR` is configured in Vercel.** Its value has not been read or verified from here; decide the final value on Day 12.
 - Deployed at `https://ai-employee-lovat.vercel.app`; per-deployment `*.vercel.app` URLs sit behind SSO. Day 8 results are in `docs/TEST-RESULTS.md`.
-- `npm run test:orders` writes real rows; run `npm run test:restore-stock` afterwards. To clear them for real, use **Reset demo data** in `/admin`: it needs the passcode and typing RESET.
+- `npm run test:orders` writes real rows; run `npm run test:restore-stock` afterwards. To clear them for real, use **Reset demo data** in `/admin`: it needs the passcode and typing RESET. Note that `order-integration` creates one conversation and one order per case, so **run it before a reset, never after**, or it repopulates the tables.
 
 ## Test commands and next steps
 

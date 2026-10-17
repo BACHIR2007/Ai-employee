@@ -64,14 +64,41 @@ const ALLOWED_REASONS = new Set<string>([
   "reset",
 ]);
 
-const ALLOWED_OUTCOMES = new Set<string>(["ok", "blocked", "failed"]);
+/** Outcomes used by the ordinary request events. */
+const DEFAULT_OUTCOMES = ["ok", "blocked", "failed"] as const;
+
+/**
+ * Outcomes for the owner login. They are deliberately more specific than
+ * ok/blocked/failed, because "the owner could not get in" is the one thing the
+ * owner actually needs to diagnose, and none of these words reveals a secret:
+ * they describe WHICH check failed, never what was submitted or what is
+ * configured.
+ */
+const ADMIN_LOGIN_OUTCOMES = [
+  "success",
+  "not_configured",
+  "bad_origin",
+  "bad_body",
+  "mismatch",
+] as const;
+
+export type AdminLoginOutcome = (typeof ADMIN_LOGIN_OUTCOMES)[number];
+
+/**
+ * Each event gets its own outcome vocabulary, so a login outcome can never be
+ * printed on a chat line and a chat outcome can never be printed on a login
+ * line. An unknown event falls back to the default vocabulary.
+ */
+const OUTCOMES_BY_EVENT: Record<string, readonly string[]> = {
+  admin_login: ADMIN_LOGIN_OUTCOMES,
+};
 
 /**
  * Event names are a fixed vocabulary too. Without this, `event` would fall
  * through to safeValue, which only accepts the reason list, and every event
  * name would print as "-".
  */
-const ALLOWED_EVENTS = new Set<string>(["chat", "reset", "order", "limits"]);
+const ALLOWED_EVENTS = new Set<string>(["chat", "reset", "order", "limits", "admin_login"]);
 
 /** Anything not on the allowlist is coerced away rather than printed. */
 function safeValue(value: string | number | boolean | null | undefined): string | number | boolean {
@@ -104,7 +131,11 @@ export function formatLog(fields: LogFields): string {
       continue;
     }
     if (key === "outcome") {
-      parts.push(`outcome=${ALLOWED_OUTCOMES.has(String(raw)) ? String(raw) : "unknown"}`);
+      // The vocabulary is chosen by the event on the same line, so a login
+      // outcome can never leak onto a chat line or the reverse.
+      const eventName = "event" in fields ? String(fields.event) : "";
+      const allowed = OUTCOMES_BY_EVENT[eventName] ?? DEFAULT_OUTCOMES;
+      parts.push(`outcome=${allowed.includes(String(raw)) ? String(raw) : "unknown"}`);
       continue;
     }
     if (key === "event") {

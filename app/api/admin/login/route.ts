@@ -10,12 +10,14 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
+  authConfigured,
   NO_STORE_HEADERS,
   SESSION_COOKIE,
   sessionCookieOptions,
   signSession,
   verifyPasscode,
 } from "@/lib/auth";
+import { logEvent, type AdminLoginOutcome } from "@/lib/diagnostics";
 
 export const maxDuration = 60;
 
@@ -49,22 +51,59 @@ function generic401() {
   );
 }
 
+/**
+ * One line per attempt, carrying ONLY the outcome and how long it took.
+ *
+ * The submitted passcode, the configured values, their lengths, the cookie and
+ * the token are never passed here and could not be printed even if they were:
+ * the allowlist in lib/diagnostics.ts drops any field that is not on it, and
+ * `outcome` only prints a word from the admin_login vocabulary.
+ */
+function record(outcome: AdminLoginOutcome, startedAt: number) {
+  logEvent({
+    event: "admin_login",
+    outcome,
+    durationMs: Date.now() - startedAt,
+  });
+}
+
 export async function POST(request: Request) {
-  if (!sameOrigin(request)) return generic401();
+  const startedAt = Date.now();
+
+  if (!sameOrigin(request)) {
+    record("bad_origin", startedAt);
+    return generic401();
+  }
 
   let parsed: z.infer<typeof bodySchema>;
   try {
     parsed = bodySchema.parse(await request.json());
   } catch {
     // Deliberately identical to a wrong passcode.
+    record("bad_body", startedAt);
     return generic401();
   }
 
-  if (!verifyPasscode(parsed.passcode)) return generic401();
+  // Checked separately from verifyPasscode so a configuration fault is not
+  // reported as a wrong passcode. This reads the variables, never their values.
+  if (!authConfigured()) {
+    record("not_configured", startedAt);
+    return generic401();
+  }
+
+  if (!verifyPasscode(parsed.passcode)) {
+    record("mismatch", startedAt);
+    return generic401();
+  }
 
   const token = signSession();
   // A usable passcode with an unusable session secret must fail closed.
-  if (!token) return generic401();
+  if (!token) {
+    record("not_configured", startedAt);
+    return generic401();
+  }
+
+  record("success", startedAt);
 
   const response = NextResponse.json(
     { authenticated: true },

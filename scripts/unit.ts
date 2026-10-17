@@ -21,6 +21,7 @@ import {
 } from "../lib/order-summary";
 import { evaluateConfirmationGate } from "../lib/confirmation-gate";
 import { SEED_STOCK_BY_NAME } from "../lib/seed-data";
+import { formatLog, logEvent } from "../lib/diagnostics";
 import {
   authConfigured,
   clearedCookieOptions,
@@ -792,6 +793,123 @@ console.log("\n--- 3.5 dashboard auth (Day 9) ---");
   else process.env.DASHBOARD_PASSCODE = REAL.DASHBOARD_PASSCODE;
   if (REAL.SESSION_SECRET === undefined) delete process.env.SESSION_SECRET;
   else process.env.SESSION_SECRET = REAL.SESSION_SECRET;
+}
+
+// ---------------------------------------------------------------------------
+// Admin login diagnostics. The line may carry the outcome and the duration and
+// nothing else, so these tests attack it with realistic secrets.
+// ---------------------------------------------------------------------------
+console.log("\n--- admin_login diagnostics ---");
+{
+  const OUTCOMES = [
+    "success",
+    "not_configured",
+    "bad_origin",
+    "bad_body",
+    "mismatch",
+  ] as const;
+
+  // The event name and every outcome are printable.
+  for (const o of OUTCOMES) {
+    check(
+      `event=admin_login prints outcome=${o}`,
+      formatLog({ event: "admin_login", outcome: o, durationMs: 7 }).includes(
+        `event=admin_login outcome=${o} durationMs=7`,
+      ),
+      formatLog({ event: "admin_login", outcome: o, durationMs: 7 }),
+    );
+  }
+  check(
+    "an unknown admin_login outcome prints as unknown",
+    formatLog({ event: "admin_login", outcome: "leaked-secret" }).includes("outcome=unknown"),
+    formatLog({ event: "admin_login", outcome: "leaked-secret" }),
+  );
+  // Vocabularies do not leak across events.
+  check(
+    "a chat outcome is refused on a login line",
+    formatLog({ event: "admin_login", outcome: "blocked" }).includes("outcome=unknown"),
+  );
+  check(
+    "a login outcome is refused on a chat line",
+    formatLog({ event: "chat", outcome: "not_configured" }).includes("outcome=unknown"),
+  );
+  check(
+    "an unknown event name prints as unknown",
+    formatLog({ event: "admin_passcode", outcome: "success" }).includes("event=unknown"),
+  );
+
+  // Nothing sensitive can be smuggled through a field that IS allowlisted.
+  const SECRETS = [
+    "hunter2-the-real-passcode",
+    "sk-ant-very-secret-key-0123456789",
+    "postgres://user:hunter2@host/db",
+    "ae_session=v1.1234.deadbeefsignature",
+    "ae_visitor=rawvisitorToken123",
+    "the passcode is hunter2-the-real-passcode",
+    "4012345678901234",
+  ];
+  for (const secret of SECRETS) {
+    check(
+      `a non-allowlisted field drops "${secret.slice(0, 20)}..."`,
+      !formatLog({
+        event: "admin_login",
+        outcome: "mismatch",
+        passcode: secret,
+        submittedPasscode: secret,
+        envValue: secret,
+        cookie: secret,
+        token: secret,
+        length: secret.length,
+      } as never).includes(secret),
+    );
+    check(
+      `an outcome string of "${secret.slice(0, 16)}..." prints as unknown`,
+      !formatLog({ event: "admin_login", outcome: secret as never }).includes(secret),
+    );
+    check(
+      `an event name of "${secret.slice(0, 16)}..." prints as unknown`,
+      !formatLog({ event: secret as never, outcome: "success" }).includes(secret),
+    );
+    check(
+      `a reason of "${secret.slice(0, 16)}..." prints as unknown`,
+      !formatLog({ event: "admin_login", outcome: "mismatch", reason: secret as never }).includes(secret),
+    );
+  }
+
+  // The real logger, captured end to end.
+  const captured: string[] = [];
+  const originalInfo = console.info;
+  console.info = (...args: unknown[]) => {
+    captured.push(args.map(String).join(" "));
+  };
+  try {
+    for (const o of OUTCOMES) {
+      logEvent({ event: "admin_login", outcome: o, durationMs: 3 });
+    }
+    logEvent({
+      event: "admin_login",
+      outcome: "mismatch",
+      durationMs: 3,
+      passcode: "hunter2-the-real-passcode",
+      submittedPasscode: "hunter2-the-real-passcode",
+      cookie: "ae_session=abc",
+      length: 21,
+    } as never);
+  } finally {
+    console.info = originalInfo;
+  }
+  const all = captured.join("\n");
+  check("one line per attempt", captured.length === OUTCOMES.length + 1, `${captured.length}`);
+  for (const secret of SECRETS) {
+    check(`logEvent output excludes "${secret.slice(0, 20)}..."`, !all.includes(secret));
+  }
+  check("the duration is present", all.includes("durationMs=3"));
+  check(
+    "every outcome appears on its own line",
+    OUTCOMES.every((o) => captured.some((l) => l.includes(`outcome=${o}`))),
+  );
+  check("the line is prefixed for grep", all.startsWith("[demo] event=admin_login"));
+  console.log(`  sample: ${captured[1]}`);
 }
 
 console.log(`\n=============== UNIT TEST SUMMARY ===============`);
