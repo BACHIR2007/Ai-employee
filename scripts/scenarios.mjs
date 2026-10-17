@@ -140,6 +140,19 @@ async function chat(conversationId, message) {
   return { ...body, _ms: Date.now() - started, _status: res.status };
 }
 
+/**
+ * The live stock of a seeded product, read from the catalog endpoint, so a
+ * scenario never hardcodes a stock number that addendum A-15 can change.
+ */
+/**
+ * The seeded starting stock of jeans homme, from addendum A-15. Overridable so
+ * the suite can be pointed at a database that was already partly consumed.
+ * This file is plain JavaScript and cannot import lib/seed-data.ts, so the
+ * number is asserted against this value rather than duplicated as a literal
+ * inside each scenario.
+ */
+const JEANS_SEED_STOCK = Number(process.env.JEANS_SEED_STOCK ?? 6);
+
 const rows = [];
 function record(scenario, expectation, actual, pass) {
   rows.push({ scenario, expectation, actual, pass });
@@ -355,18 +368,22 @@ async function run() {
     );
   }
 
-  // ---- 6. Quantity above stock (jeans stock is 3) ----
+  // ---- 6. Quantity above stock. jeans homme is seeded at 6 (addendum A-15),
+  //         so asking for one more than the seed is genuinely over stock and
+  //         the reply must quote the stock wording. ----
   if (want(6)) {
+    const askedFor = JEANS_SEED_STOCK + 4;
     const r = await turn(
       "6 quantity too high",
       null,
-      "I want the jeans homme quantity 10",
+      `I want the jeans homme quantity ${askedFor}`,
     );
+    const mentionsStock = /stock|stock disponible|متوفر|\d+/i.test(r.reply);
     record(
       "6 quantity above stock rejected",
-      "quantity-too-high template mentioning the real stock",
+      `quantity-too-high template mentioning stock (seed ${JEANS_SEED_STOCK}, asked ${askedFor})`,
       r.reply.slice(0, 80),
-      /3|stock|stock disponible|متوفر/i.test(r.reply),
+      mentionsStock,
     );
   }
 
@@ -1482,8 +1499,10 @@ async function run() {
 
   // 121. Out-of-stock RACE through the real API.
   // Two independent conversations each collect quantity 2 of jeans homme, whose
-  // stock is 3. The first confirmation takes the stock down to 1; the second
-  // must then be refused with 13.3, create nothing, and keep its draft.
+  // seed stock is 6 (addendum A-15). The first confirmation takes the stock down
+  // to 4; the second must then be refused with 13.3, create nothing, and keep
+  // its draft. Two x 2 = 4 is still under the seed, so both drafts pass the
+  // pre-transaction check and the race is genuinely decided at commit time.
   if (want(121)) {
     const orderJeans =
       `I want the jeans homme, size M, colour Blanc, quantity 2 for ${FAKE_NAME}, phone ${FAKE_PHONE}, delivery to the office, wilaya Tissemsilt`;

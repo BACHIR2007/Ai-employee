@@ -14,6 +14,7 @@
 // Usage: npm run test:orders
 
 import { prisma } from "../lib/prisma";
+import { SEED_STOCK_BY_NAME } from "../lib/seed-data";
 import {
   createOrderFromConfirmedDraft,
   loadTrustedCatalog,
@@ -52,8 +53,10 @@ function eq(name: string, actual: unknown, expected: unknown) {
 }
 
 // A product with the smallest stock, so a decrement is easy to observe.
-const LOW_STOCK = "jeans homme"; // seeded 3
-const OTHER = "T-shirt coton bio"; // seeded 20
+// Both values come from lib/seed-data.ts, never from a literal in this test,
+// so A-15 stock changes cannot silently break the fixtures.
+const LOW_STOCK = "jeans homme";
+const OTHER = "T-shirt coton bio";
 
 let businessId = "";
 let lowId = "";
@@ -73,7 +76,22 @@ const baseDraft = (over: Partial<Draft> = {}): Draft => ({
   ...over,
 });
 
-const SEED_STOCK: Record<string, number> = { [LOW_STOCK]: 3, [OTHER]: 20 };
+/**
+ * Seed stock read from the one shared module. A missing name is a hard error,
+ * because silently defaulting it would hide a renamed product.
+ */
+function seedStockFor(name: string): number {
+  const value = SEED_STOCK_BY_NAME[name];
+  if (value === undefined) {
+    throw new Error(`no seed stock for "${name}" in lib/seed-data.ts`);
+  }
+  return value;
+}
+
+const SEED_STOCK: Record<string, number> = {
+  [LOW_STOCK]: seedStockFor(LOW_STOCK),
+  [OTHER]: seedStockFor(OTHER),
+};
 
 /**
  * Puts the two fixture products back to their seeded stock and price.

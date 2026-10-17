@@ -11,6 +11,7 @@ import { listAllOrders } from "@/lib/orders";
 import UnlockForm from "./UnlockForm";
 import LogoutButton from "./LogoutButton";
 import OwnerActions from "./OwnerActions";
+import ResetDemoData from "./ResetDemoData";
 
 export const metadata: Metadata = {
   title: "Owner",
@@ -102,6 +103,10 @@ export default async function AdminPage() {
           ))}
         </ul>
       )}
+
+      {/* A-15: the reset is owner-only and lives here and nowhere else. There
+          is no link or hint to it on the public page. */}
+      <ResetDemoData />
     </main>
   );
 }

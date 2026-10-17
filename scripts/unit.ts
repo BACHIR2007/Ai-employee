@@ -20,6 +20,7 @@ import {
   type TrustedPricing,
 } from "../lib/order-summary";
 import { evaluateConfirmationGate } from "../lib/confirmation-gate";
+import { SEED_STOCK_BY_NAME } from "../lib/seed-data";
 import {
   authConfigured,
   clearedCookieOptions,
@@ -76,14 +77,23 @@ function deepEq(name: string, actual: unknown, expected: unknown) {
 // Fixtures. Shaped exactly like the seeded demo catalog. The Tissemsilt
 // regression below uses 1800 DA x 2 + 600 DA OFFICE = 4200 DA, all read from
 // these fixtures and from lib/delivery.ts, never from a literal in the test.
+//
+// Prices, names, sizes and colours are spelled out so the fixture stays a
+// self-contained object graph. Stock is NOT spelled out: it is read from
+// lib/seed-data.ts, the same module the seed, the stock restore helper and the
+// Day 11 reset use, so an A-15 stock change cannot desynchronise these tests.
 // ---------------------------------------------------------------------------
+
+function seedStockOr(name: string, fallback: number): number {
+  return SEED_STOCK_BY_NAME[name] ?? fallback;
+}
 
 const CATALOG: CatalogProduct[] = [
   {
     id: "prod-tee-bio",
     name: "T-shirt coton bio",
     priceDzd: "1800.00",
-    stockQuantity: 20,
+    stockQuantity: seedStockOr("T-shirt coton bio", 40),
     sizes: ["S", "M", "L", "XL"],
     colors: ["Blanc", "Noir", "Bleu"],
   },
@@ -91,7 +101,7 @@ const CATALOG: CatalogProduct[] = [
     id: "prod-jeans",
     name: "jeans homme",
     priceDzd: "5500.00",
-    stockQuantity: 3,
+    stockQuantity: seedStockOr("jeans homme", 6),
     sizes: ["M", "L"],
     colors: ["Bleu", "Noir"],
   },
@@ -99,7 +109,7 @@ const CATALOG: CatalogProduct[] = [
     id: "prod-baskets",
     name: "Baskets nike",
     priceDzd: "7500.00",
-    stockQuantity: 8,
+    stockQuantity: seedStockOr("Baskets nike", 30),
     sizes: [],
     colors: ["Blanc", "Noir"],
   },

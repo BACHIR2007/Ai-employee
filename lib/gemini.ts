@@ -128,23 +128,49 @@ const RESPONSE_SCHEMA = {
  * Makes at most two attempts. The retry only happens when a full
  * PER_ATTEMPT_TIMEOUT_MS still fits in the remaining budget (A-03).
  */
+/**
+ * TEST-ONLY injection point (addendum Day 11 / A-15).
+ *
+ * An explicit function parameter, never an environment variable and never a
+ * route argument, so no request can select it. It exists so the failure paths
+ * can be exercised offline against the real `callGemini` control flow, without
+ * a network call and without a real quota.
+ */
+export type GeminiClient = (
+  prompt: string,
+  attempt: number,
+  abortSignal: AbortSignal,
+) => Promise<string>;
+
+export type GeminiCallOptions = {
+  /** Test-only. When set, replaces the provider call entirely. */
+  __testClient?: GeminiClient;
+};
+
 export async function callGemini(
   latestCustomerMessage: string,
   contextJson: string,
   requestStartedAt: number,
   replyInstruction: string,
+  options: GeminiCallOptions = {},
 ): Promise<GeminiOutcome> {
+  const testClient = options.__testClient;
+  // With a test client the real credentials are neither read nor needed, so a
+  // missing key must not short-circuit before the injection is exercised.
+  if (!testClient) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return { ok: false, category: "auth", rawText: null, attempts: 0 };
+    }
+  }
+
   const apiKey = process.env.GEMINI_API_KEY;
   const model = process.env.GEMINI_MODEL;
-
-  if (!apiKey) {
-    return { ok: false, category: "auth", rawText: null, attempts: 0 };
-  }
-  if (!model) {
+  if (!testClient && !model) {
     return { ok: false, category: "unknown", rawText: null, attempts: 0 };
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = testClient ? null : new GoogleGenAI({ apiKey: apiKey as string });
   let attempts = 0;
   let lastCategory: "quota" | "timeout" | "auth" | "invalid-output" | "unknown" = "unknown";
   let lastRaw: string | null = null;
@@ -158,19 +184,26 @@ export async function callGemini(
     attempts += 1;
 
     try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: `CONTEXT (JSON):\n${contextJson}\n\nCUSTOMER MESSAGE:\n${latestCustomerMessage}\n\n${replyInstruction}`,
-        config: {
-          systemInstruction: SYSTEM_PROMPT,
-          temperature: 0,
-          responseMimeType: "application/json",
-          responseSchema: RESPONSE_SCHEMA,
-          abortSignal: AbortSignal.timeout(PER_ATTEMPT_TIMEOUT_MS),
-        },
-      });
+      const prompt = `CONTEXT (JSON):\n${contextJson}\n\nCUSTOMER MESSAGE:\n${latestCustomerMessage}\n\n${replyInstruction}`;
+      const abortSignal = AbortSignal.timeout(PER_ATTEMPT_TIMEOUT_MS);
 
-      const text = response.text ?? "";
+      // The test client returns the raw text the provider would have produced,
+      // so parsing and classification below are exercised unchanged.
+      const text = testClient
+        ? await testClient(prompt, attempt, abortSignal)
+        : (
+            await (ai as NonNullable<typeof ai>).models.generateContent({
+              model: model as string,
+              contents: prompt,
+              config: {
+                systemInstruction: SYSTEM_PROMPT,
+                temperature: 0,
+                responseMimeType: "application/json",
+                responseSchema: RESPONSE_SCHEMA,
+                abortSignal,
+              },
+            })
+          ).text ?? "";
       lastRaw = text;
 
       const parsed = geminiResponseSchema.safeParse(safeJson(text));

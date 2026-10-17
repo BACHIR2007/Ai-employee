@@ -22,6 +22,11 @@ import {
   visitorSetCookieHeader,
 } from "@/lib/visitor";
 import {
+  DEFAULT_AI_CALLS_PER_MINUTE,
+  geminiReasonFor,
+  logEvent,
+} from "@/lib/diagnostics";
+import {
   dominantScriptIsArabic,
   explicitLanguageRequest,
   replyInLabel,
@@ -346,14 +351,25 @@ async function handleChat(request: Request, ctx: VisitorContext) {
   const conversationLanguage = stored.language;
   const conversationLanguageExplicit = stored.explicit;
 
-  // --- Limits: per-conversation and global hourly (spec 9.1, A-06/A-10) ---
+  // --- Limits: per-conversation, global per-minute and global hourly ---
+  // spec 9.1 and A-06/A-10, plus A-15 which adds the per-minute cap.
+  // Every cap answers with a friendly localized template and makes no Gemini
+  // call, and each has its own reason so logs and tests can tell them apart.
   const maxPerConversation = Number(process.env.DEMO_MAX_CUSTOMER_MESSAGES_PER_CONVERSATION ?? 40);
   const maxCallsPerHour = Number(process.env.DEMO_AI_CALLS_PER_HOUR ?? 120);
+  const maxCallsPerMinute = Number(process.env.DEMO_AI_CALLS_PER_MINUTE ?? DEFAULT_AI_CALLS_PER_MINUTE);
 
   const customerMessages = await prisma.message.count({
     where: { conversationId: conversation.id, senderType: "CUSTOMER" },
   });
   if (customerMessages >= maxPerConversation) {
+    logEvent({
+      event: "chat",
+      outcome: "blocked",
+      reason: "conversation-cap",
+      durationMs: Date.now() - startedAt,
+      phase: conversation.phase,
+    });
     return okJson({
       conversationId: conversation.id,
       reply: CONVERSATION_LIMIT.en,
@@ -365,14 +381,52 @@ async function handleChat(request: Request, ctx: VisitorContext) {
     });
   }
 
-  // Failed AI attempts count towards the cap.
-  const aiCallsLastHour = await prisma.message.count({
-    where: {
-      senderType: "AI",
-      createdAt: { gte: new Date(Date.now() - 3_600_000) },
-    },
-  });
+  // Failed AI attempts count towards both global caps, exactly as for the
+  // hourly one: the Message row is what is counted, whatever the call did.
+  const sinceMinuteAgo = new Date(Date.now() - 60_000);
+  const [aiCallsLastMinute, aiCallsLastHour] = await Promise.all([
+    prisma.message.count({
+      where: { senderType: "AI", createdAt: { gte: sinceMinuteAgo } },
+    }),
+    prisma.message.count({
+      where: {
+        senderType: "AI",
+        createdAt: { gte: new Date(Date.now() - 3_600_000) },
+      },
+    }),
+  ]);
+
+  // A-15: the per-minute cap is checked first, so a burst is stopped in the
+  // cheapest place. It exists to protect the Gemini quota during judging.
+  if (aiCallsLastMinute >= maxCallsPerMinute) {
+    logEvent({
+      event: "chat",
+      outcome: "blocked",
+      reason: "minute-cap",
+      durationMs: Date.now() - startedAt,
+      phase: conversation.phase,
+      aiCallCount: aiCallsLastMinute,
+    });
+    return okJson({
+      conversationId: conversation.id,
+      reply: DEMO_BUSY.en,
+      phase: conversation.phase,
+      missingFields: [],
+      orderCreated: false,
+      limited: true,
+      limitReason: "minute",
+    });
+  }
+
   if (aiCallsLastHour >= maxCallsPerHour) {
+    logEvent({
+      event: "chat",
+      outcome: "blocked",
+      reason: "hour-cap",
+      durationMs: Date.now() - startedAt,
+      phase: conversation.phase,
+      aiCallCount: aiCallsLastHour,
+    });
     return okJson({
       conversationId: conversation.id,
       reply: DEMO_BUSY.en,
@@ -454,6 +508,17 @@ async function handleChat(request: Request, ctx: VisitorContext) {
     const language = fallbackLanguage(message);
     const reply =
       outcome.category === "quota" ? DEMO_BUSY[language] : GENERIC_ERROR[language];
+
+    // A-15: one line, no message text and no raw model output.
+    logEvent({
+      event: "chat",
+      outcome: "failed",
+      reason: geminiReasonFor(outcome.category),
+      durationMs: Date.now() - startedAt,
+      language,
+      phase: conversation.phase,
+      attempts: outcome.attempts,
+    });
 
     return okJson({
       conversationId: conversation.id,

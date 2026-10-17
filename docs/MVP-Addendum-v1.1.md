@@ -1,9 +1,9 @@
 # AI Employee — MVP Specification: Addendum v1.1
 
-**Status:** Normative. Claude's final technical review of MVP Specification v1.0 is complete. **v1.1 = MVP Specification v1.0 + this addendum.** Amended on October 20, 2026 by **A-14** (public demo access without a passcode); the amendment is recorded below and applies from that date.
+**Status:** Normative. Claude's final technical review of MVP Specification v1.0 is complete. **v1.1 = MVP Specification v1.0 + this addendum.** Amended on October 20, 2026 by **A-14** (public demo access without a passcode) and on October 22, 2026 by **A-15** (reset visibility, new starting stock, per-minute cap, diagnostic logging). Both amendments are recorded below and apply from their dates.
 **Precedence:** where this addendum conflicts with v1.0, **this addendum wins**. Everything in v1.0 not mentioned here is unchanged.
 **Usage:** give both files to every AI coding session (`docs/MVP-Specification.md` and `docs/MVP-Addendum-v1.1.md`).
-**Date:** October 12, 2026 (amended October 20, 2026)
+**Date:** October 12, 2026 (amended October 20 and October 22, 2026)
 
 ---
 
@@ -115,3 +115,12 @@ Version 1.1 is frozen. Changes after this point require a real correctness, secu
 - The passcode is **kept only for a hidden `/admin` owner view** that lists all orders and can later run the reset. It is not linked from anywhere and carries `noindex` metadata.
 - **Reason:** judging friction (a judge who cannot get in judges nothing) and cross-visitor privacy (one visitor must never see another visitor's name and phone number).
 - This relaxes §11's passcode requirement for public visitors only. Everything else in §11 stands: server-side verification of every protected resource, no passcode in the repository, and the passcode still published in the submission description and demo video.
+
+## A-15 — Day 11: reset visibility, starting stock, per-minute cap and diagnostics (extends §10.4, §11, §12.8, §14.2)
+
+**Owner decisions, recorded here as A-13 requires.**
+
+- **1. Reset is an owner-only action.** It exists solely inside `/admin` behind a valid passcode session (`POST /api/admin/reset`, §11.2). There is no reset control, link or hint anywhere on the public `/` page, and a judge never sees it. Unauthenticated calls get 401.
+- **2. New starting stock.** The seeded starting quantities change to **Baskets nike 30, Sweat a capuche 30, T-shirt coton bio 40, T-shirt enfant 40, jeans homme 6**. *Reason: judges must not run out of stock mid-demo.* **jeans homme deliberately stays low at 6** so the out-of-stock and price-changed paths stay easy to demonstrate on demand. Product names, prices, sizes, colours and descriptions are unchanged. These numbers live in exactly one module, which the seed, the stock restore helper and the reset all read, so they cannot drift.
+- **3. Per-minute global AI-call cap.** A new rolling per-minute cap applies on top of the existing hourly cap, defaulting to **12 calls per minute**, overridable with `DEMO_AI_CALLS_PER_MINUTE` and read with a **code default** when the variable is unset. It uses the same database-count approach as the hourly cap, so it needs no extra state. Exceeding it returns the existing friendly localized busy template without calling Gemini, and is logged under a reason distinct from `minute`, `hour`, `conversation` and `gemini-quota`. **Failed calls still count**, exactly as for the hourly cap.
+- **4. Diagnostic logging.** Concise server-side logs go through one helper with a strict field **allowlist**: event name, outcome, reason, duration in ms, language, phase and counts. Message text, customer names, phones, addresses, order contents, cookies, visitor tokens, passcodes, raw model output and data-bearing stack traces are **never** logged. A test feeds sensitive sample values through the helper and asserts none of them appears in the output.

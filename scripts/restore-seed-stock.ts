@@ -13,15 +13,10 @@
 // Usage: npm run test:restore-stock
 
 import { prisma } from "../lib/prisma";
+import { SEED_STOCK_BY_NAME } from "../lib/seed-data";
 
-/** The seed values in prisma/seed.ts. Kept explicit, never derived. */
-const SEED_STOCK: Record<string, number> = {
-  "T-shirt coton bio": 20,
-  "T-shirt enfant": 25,
-  "Sweat à capuche": 12,
-  "Baskets nike": 8,
-  "jeans homme": 3,
-};
+// The seed values come from lib/seed-data.ts, the same module the seed script
+// and the Day 11 reset read, so the three can never drift apart.
 
 async function main() {
   const products = await prisma.product.findMany({
@@ -34,7 +29,7 @@ async function main() {
 
   let restored = 0;
   for (const p of products) {
-    const target = SEED_STOCK[p.name];
+    const target = SEED_STOCK_BY_NAME[p.name];
     if (target === undefined) {
       console.log(`  skipped ${p.name}: not a seeded product`);
       continue;

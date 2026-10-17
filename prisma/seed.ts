@@ -8,80 +8,22 @@
 // and catalog below were explicitly approved by the project owner.
 //
 // Idempotent by design: running this twice produces the same rows and no
-// duplicates. The Day 11 reset endpoint (spec section 10.4) is expected to call
-// this same function to restore starting stock after clearing demo
-// conversations, messages and orders.
+// duplicates.
 //
-// Delivery fees are NOT seeded. Per spec section 6 they live in a server-side
-// code configuration module, not in the database.
+// The catalog itself lives in lib/seed-data.ts, which is the single source of
+// truth for the seed values. The Day 11 reset (spec 10.4) and the manual stock
+// restore helper read the same module, so the three can never disagree about
+// what the seeded state is.
 
 import "dotenv/config";
 import { PrismaNeon } from "@prisma/adapter-neon";
 import { PrismaClient } from "../generated/prisma/client";
+import { DEMO_BUSINESS_NAME, DEMO_PRODUCTS } from "../lib/seed-data";
+import type { SeedProduct } from "../lib/seed-data";
 
-export const DEMO_BUSINESS_NAME = "Boutique elegance";
-
-export type SeedProduct = {
-  name: string;
-  description: string;
-  price: string;
-  stockQuantity: number;
-  options: { sizes: string[]; colors: string[] };
-};
-
-// DEMO DATA - approved catalog. Stock levels are intentionally low so the
-// out-of-stock and quantity-too-high paths are easy to demonstrate.
-export const DEMO_PRODUCTS: SeedProduct[] = [
-  {
-    name: "T-shirt coton bio",
-    description:
-      "Coton bio 100 %, coupe régulière. Lavable à 30 °C. Idéal pour la mi-saison.",
-    price: "1800.00",
-    stockQuantity: 20,
-    options: { sizes: ["S", "M", "L", "XL"], colors: ["Blanc", "Noir", "Bleu"] },
-  },
-  {
-    name: "Sweat à capuche",
-    description:
-      "Molleton gratté à l'intérieur, coupe unisexe. Idéal pour l'hiver et les journées de pluie.",
-    price: "3500.00",
-    stockQuantity: 12,
-    options: { sizes: ["M", "L", "XL"], colors: ["Gris", "Noir", "Vert"] },
-  },
-  {
-    name: "Baskets nike",
-    description:
-      "Semelle souple et dessus respirant. Confortables pour la marche urbaine.",
-    price: "7500.00",
-    stockQuantity: 8,
-    options: {
-      sizes: ["40", "41", "42", "43", "44"],
-      colors: ["Blanc", "Noir"],
-    },
-  },
-  {
-    name: "jeans homme",
-    description:
-      "Denim stretch, coupe droite. Cinq poches, bouton et fermeture éclair.",
-    price: "5500.00",
-    stockQuantity: 3,
-    options: {
-      sizes: ["M", "L", "XL", "XXL"],
-      colors: ["Blanc", "Beige", "Marron"],
-    },
-  },
-  {
-    name: "T-shirt enfant",
-    description:
-      "Coton doux, facile à enlever. Motifs colorés, tailles 2 à 12 ans.",
-    price: "1200.00",
-    stockQuantity: 25,
-    options: {
-      sizes: ["2-4", "6-8", "10-12"],
-      colors: ["Jaune", "Rose", "Bleu"],
-    },
-  },
-];
+// Re-exported so existing importers of the seed data keep working.
+export { DEMO_BUSINESS_NAME, DEMO_PRODUCTS };
+export type { SeedProduct };
 
 /**
  * Creates the demo business and catalog if missing, and restores each seeded
@@ -102,7 +44,7 @@ export async function seedDemoData(client: PrismaClient) {
     });
 
     if (existing) {
-      // Restore starting stock so this doubles as the Day 11 reset step.
+      // Restore starting stock so this doubles as a stock-only reset step.
       await client.product.update({
         where: { id: existing.id },
         data: { stockQuantity: product.stockQuantity },
