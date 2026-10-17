@@ -1,9 +1,9 @@
 # AI Employee — MVP Specification: Addendum v1.1
 
-**Status:** Normative. Claude's final technical review of MVP Specification v1.0 is complete. **v1.1 = MVP Specification v1.0 + this addendum.**
+**Status:** Normative. Claude's final technical review of MVP Specification v1.0 is complete. **v1.1 = MVP Specification v1.0 + this addendum.** Amended on October 20, 2026 by **A-14** (public demo access without a passcode); the amendment is recorded below and applies from that date.
 **Precedence:** where this addendum conflicts with v1.0, **this addendum wins**. Everything in v1.0 not mentioned here is unchanged.
 **Usage:** give both files to every AI coding session (`docs/MVP-Specification.md` and `docs/MVP-Addendum-v1.1.md`).
-**Date:** October 12, 2026
+**Date:** October 12, 2026 (amended October 20, 2026)
 
 ---
 
@@ -105,3 +105,13 @@ Day 1's database check uses plain `pg` with a temporary table and Prisma is **no
 ## A-13 — Document status
 
 Version 1.1 is frozen. Changes after this point require a real correctness, security, feasibility or deadline reason, and must be recorded in this addendum before building around them.
+
+## A-14 — Public demo access (extends §11, §12.6, §14.2; supersedes the passcode requirement for public visitors)
+
+**Owner decision, recorded here as A-13 requires.**
+
+- **Judges must be able to use the demo with NO passcode.** The public `/api/orders` and `PATCH /api/orders/[id]` endpoints require no passcode.
+- An **anonymous per-browser visitor cookie** scopes the order list and the order actions to that visitor's own orders. The cookie holds a random token; the database stores only its SHA-256 hash, on the Conversation that created the order.
+- The passcode is **kept only for a hidden `/admin` owner view** that lists all orders and can later run the reset. It is not linked from anywhere and carries `noindex` metadata.
+- **Reason:** judging friction (a judge who cannot get in judges nothing) and cross-visitor privacy (one visitor must never see another visitor's name and phone number).
+- This relaxes §11's passcode requirement for public visitors only. Everything else in §11 stands: server-side verification of every protected resource, no passcode in the repository, and the passcode still published in the submission description and demo video.

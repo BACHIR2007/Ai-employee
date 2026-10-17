@@ -1,20 +1,24 @@
-// Spec 12.6 / 11.2: protected.
+// A-14: the public per-visitor order list. No passcode.
 //
-// Spec 11.2 is explicit that hiding a link is not protection, so this handler
-// verifies the session itself. An unauthenticated caller gets a 401 with an
-// empty body, never order data and never a hint about why.
+// Returns only the orders whose conversation carries this visitor's cookie
+// hash. A missing cookie or no match is simply an empty list, never an error,
+// so a first-time visitor sees a sensible empty state.
 
 import { NextResponse } from "next/server";
-import { isAuthenticated, NO_STORE_HEADERS } from "@/lib/auth";
-import { listOrders } from "@/lib/orders";
+import { readVisitor } from "@/lib/visitor";
+import { listVisitorOrders } from "@/lib/orders";
 
 export const maxDuration = 60;
 
-export async function GET() {
-  if (!(await isAuthenticated())) {
-    return NextResponse.json({ orders: [] }, { status: 401, headers: NO_STORE_HEADERS });
-  }
+/** Private and per-cookie: never cached by a proxy or a shared cache. */
+export const visitorOrderHeaders = {
+  "Cache-Control": "private, no-store, no-cache, must-revalidate",
+  Vary: "Cookie",
+  Pragma: "no-cache",
+};
 
-  const orders = await listOrders();
-  return NextResponse.json({ orders }, { status: 200, headers: NO_STORE_HEADERS });
+export async function GET() {
+  const { keyHash } = await readVisitor();
+  const orders = keyHash ? await listVisitorOrders(keyHash) : [];
+  return NextResponse.json({ orders }, { status: 200, headers: visitorOrderHeaders });
 }

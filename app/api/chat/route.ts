@@ -16,6 +16,12 @@ import {
 } from "@/lib/draft";
 import { prepareOrder } from "@/lib/order-summary";
 import {
+  conversationBelongsToVisitor,
+  mintVisitor,
+  readVisitor,
+  visitorSetCookieHeader,
+} from "@/lib/visitor";
+import {
   dominantScriptIsArabic,
   explicitLanguageRequest,
   replyInLabel,
@@ -244,7 +250,23 @@ function okJson(body: unknown) {
   return Response.json(body, { status: 200 });
 }
 
+/**
+ * Carries a freshly minted visitor token out of the handler, so the exported
+ * POST can attach the Set-Cookie header to whichever response was produced,
+ * including the early rejections that never reach Gemini.
+ */
+type VisitorContext = { visitorToken: string | null };
+
 export async function POST(request: Request) {
+  const ctx: VisitorContext = { visitorToken: null };
+  const response = await handleChat(request, ctx);
+  if (ctx.visitorToken) {
+    response.headers.append("Set-Cookie", visitorSetCookieHeader(ctx.visitorToken));
+  }
+  return response;
+}
+
+async function handleChat(request: Request, ctx: VisitorContext) {
   const startedAt = Date.now();
 
   // --- Parse and validate the request body (spec 9.1) ---
@@ -275,17 +297,36 @@ export async function POST(request: Request) {
     return okJson({ ok: false, reply: GENERIC_ERROR.en });
   }
 
+  // --- A-14: the visitor identity for this request ---
+  // A visitor with no cookie gets a brand new one, minted here so it can be set
+  // on whatever response is produced. The raw token never leaves this function.
+  const existingVisitor = await readVisitor();
+  const visitor: { keyHash: string | null; mintedToken: string | null } =
+    existingVisitor.keyHash
+      ? { keyHash: existingVisitor.keyHash, mintedToken: null }
+      : mintVisitor();
+
   let conversation = inputId
     ? await prisma.conversation.findFirst({
         where: { id: inputId, businessId: business.id },
       })
     : null;
 
-  if (!conversation) {
+  // A-14: an existing conversation must belong to THIS visitor. A mismatch,
+  // including a null stored hash from before the visitor cookie existed, is
+  // refused here, BEFORE any Gemini call, with an error that does not reveal
+  // whether the conversation exists.
+  if (inputId && conversation) {
+    if (!conversationBelongsToVisitor(conversation.visitorKeyHash, visitor.keyHash)) {
+      return okJson({ ok: false, reply: INVALID_REQUEST.en });
+    }
+  } else {
     conversation = await prisma.conversation.create({
-      data: { businessId: business.id },
+      data: { businessId: business.id, visitorKeyHash: visitor.keyHash },
     });
   }
+  // Handed to the exported POST, which attaches the Set-Cookie header.
+  ctx.visitorToken = visitor.mintedToken;
 
   // --- A-06 sweep: stale PENDING AI rows become FAILED (still counted) ---
   await prisma.message.updateMany({

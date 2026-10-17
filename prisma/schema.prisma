@@ -82,6 +82,10 @@ model Conversation {
   orderDraft       Json?
   // A-09: SHA-256 of the exact normalized draft shown in the latest summary.
   confirmationHash String?
+  // A-14: SHA-256 of the anonymous visitor cookie token. Null for rows created
+  // before A-14, which are therefore visible only in the owner /admin view.
+  // The raw token is never stored.
+  visitorKeyHash String?
   createdAt        DateTime          @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime          @updatedAt @db.Timestamptz(3)
 
@@ -90,6 +94,8 @@ model Conversation {
   orders   Order[]
 
   @@index([businessId])
+  // A-14: scoping the public order list by visitor is the hot path.
+  @@index([visitorKeyHash, createdAt])
 }
 
 model Message {
