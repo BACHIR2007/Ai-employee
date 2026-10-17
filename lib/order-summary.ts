@@ -52,7 +52,8 @@ export type PreparedOrder = {
 };
 
 /** DZD amounts are handled as integer minor units to avoid float drift. */
-function toMinor(value: string): number {
+/** Parses a DZD amount into integer minor units. Exported for the dashboard. */
+export function toMinor(value: string): number {
   const [whole, frac = ""] = value.trim().split(".");
   const cents = Number((frac + "00").slice(0, 2));
   if (!Number.isFinite(Number(whole)) || !Number.isFinite(cents)) {
@@ -68,7 +69,8 @@ function toMinor(value: string): number {
  * numbers hashed by A-09, so the confirmed value is literally the displayed
  * string rather than merely an equal one.
  */
-function fromMinor(minor: number): string {
+/** Renders integer minor units back to a DZD string. Exported for the dashboard. */
+export function fromMinor(minor: number): string {
   const whole = Math.trunc(minor / 100);
   const cents = minor % 100;
   return cents === 0 ? String(whole) : `${whole}.${String(cents).padStart(2, "0")}`;

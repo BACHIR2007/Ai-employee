@@ -20,6 +20,16 @@ import {
   type TrustedPricing,
 } from "../lib/order-summary";
 import { evaluateConfirmationGate } from "../lib/confirmation-gate";
+import {
+  authConfigured,
+  clearedCookieOptions,
+  NO_STORE_HEADERS,
+  SESSION_MAX_AGE_SECONDS,
+  sessionCookieOptions,
+  signSession,
+  verifyPasscode,
+  verifySession,
+} from "../lib/auth";
 import { normalizeWilayaText, resolveWilaya, WILAYAS } from "../lib/wilayas";
 import {
   dominantScriptIsArabic,
@@ -640,6 +650,138 @@ console.log("\n--- 3.4 wilaya name resolution (Day 8 article fix) ---");
   // A genuinely unknown name is still refused.
   eq("an invented wilaya is still refused", resolveWilaya("Atlantis"), null);
   eq("nonsense Arabic is still refused", resolveWilaya("ولاية غير موجودة"), null);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n--- 3.5 dashboard auth (Day 9) ---");
+// lib/auth reads process.env at call time, so these tests set it directly.
+// The values below are THROWAWAY fixtures defined here in the test file. They
+// are not the real passcode or secret and are never written anywhere.
+{
+  const REAL = {
+    DASHBOARD_PASSCODE: process.env.DASHBOARD_PASSCODE,
+    SESSION_SECRET: process.env.SESSION_SECRET,
+  };
+  const PASSCODE = "throwaway-test-passcode-000";
+  const SECRET = "throwaway-test-session-secret-0000000000000000000000";
+  const setEnv = (p?: string, s?: string) => {
+    if (p === undefined) delete process.env.DASHBOARD_PASSCODE;
+    else process.env.DASHBOARD_PASSCODE = p;
+    if (s === undefined) delete process.env.SESSION_SECRET;
+    else process.env.SESSION_SECRET = s;
+  };
+  const NOW = 1_800_000_000_000; // fixed instant, so nothing depends on the clock
+  const HOUR = 60 * 60 * 1000;
+
+  // --- fail closed -----------------------------------------------------
+  setEnv(undefined, SECRET);
+  eq("missing passcode denies", verifyPasscode(PASSCODE), false);
+  eq("missing passcode issues no token", signSession(NOW), null);
+  setEnv(PASSCODE, undefined);
+  eq("missing secret denies", verifyPasscode(PASSCODE), false);
+  eq("missing secret issues no token", signSession(NOW), null);
+
+  setEnv("short", SECRET);
+  eq("passcode under 12 chars is refused", verifyPasscode("short"), false);
+  eq("short passcode issues no token", signSession(NOW), null);
+  eq("authConfigured is false for a short passcode", authConfigured(), false);
+
+  setEnv(PASSCODE, "tooshortsecret");
+  eq("secret under 32 chars is refused", verifyPasscode(PASSCODE), false);
+  setEnv(PASSCODE, SECRET);
+  eq("authConfigured is true for a valid setup", authConfigured(), true);
+
+  // --- passcode comparison --------------------------------------------
+  eq("correct passcode accepted", verifyPasscode(PASSCODE), true);
+  eq("wrong passcode rejected", verifyPasscode("wrong-passcode-123"), false);
+  eq("passcode is case sensitive", verifyPasscode(PASSCODE.toUpperCase()), false);
+  eq("empty passcode rejected", verifyPasscode(""), false);
+  eq(
+    "a passcode of a different length is rejected",
+    verifyPasscode(PASSCODE + "x"),
+    false,
+  );
+
+  // --- token sign / verify -------------------------------------------
+  const token = signSession(NOW)!;
+  check("a token is produced", typeof token === "string" && token.length > 0);
+  eq("a valid token verifies", verifySession(token, NOW), true);
+  check(
+    "the token does not contain the passcode",
+    !token.includes(PASSCODE) && !token.includes("passcode"),
+    token.slice(0, 24),
+  );
+  eq("the token has three parts", token.split(".").length, 3);
+
+  // --- expiry ----------------------------------------------------------
+  eq("a token is still valid just before expiry", verifySession(token, NOW + SESSION_MAX_AGE_SECONDS * 1000 - 1000), true);
+  eq("a token is rejected at expiry", verifySession(token, NOW + SESSION_MAX_AGE_SECONDS * 1000 + 1), false);
+  // The token lives 12 hours, so 13 hours must be refused.
+  eq("a long-expired token is rejected", verifySession(token, NOW + 13 * HOUR), false);
+  eq("a token is accepted at 11 hours", verifySession(token, NOW + 11 * HOUR), true);
+
+  // --- tampering -------------------------------------------------------
+  eq("a tampered payload is rejected", verifySession(token.replace(/\.\d+\./, ".1."), NOW), false);
+  eq("a tampered signature is rejected", verifySession(`${token.slice(0, -1)}0`, NOW), false);
+  eq("an empty token is rejected", verifySession("", NOW), false);
+  eq("a null token is rejected", verifySession(null, NOW), false);
+  eq("an undefined token is rejected", verifySession(undefined, NOW), false);
+  eq("a token with too few parts is rejected", verifySession("v1.123", NOW), false);
+  eq("an unknown version is rejected", verifySession(token.replace(/^v1\./, "v2."), NOW), false);
+  eq("a garbage token is rejected", verifySession("not-a-token", NOW), false);
+
+  // --- a token signed with a different secret --------------------------
+  const otherToken = (() => {
+    const saved = process.env.SESSION_SECRET;
+    process.env.SESSION_SECRET = "a-completely-different-secret-0000000000000000000";
+    const t = signSession(NOW)!;
+    process.env.SESSION_SECRET = saved;
+    return t;
+  })();
+  eq("a token signed with a different secret is rejected", verifySession(otherToken, NOW), false);
+
+  // --- cookie options --------------------------------------------------
+  const opts = sessionCookieOptions();
+  eq("cookie is HttpOnly", opts.httpOnly, true);
+  eq("cookie is SameSite=Lax", opts.sameSite, "lax");
+  eq("cookie is scoped to /", opts.path, "/");
+  eq("cookie max age is 12 hours", opts.maxAge, 60 * 60 * 12);
+  eq("cleared cookie expires immediately", clearedCookieOptions().maxAge, 0);
+  eq(
+    "cookie is Secure in production",
+    (() => {
+      const saved = process.env.NODE_ENV;
+      (process.env as Record<string, string | undefined>).NODE_ENV = "production";
+      const secure = sessionCookieOptions().secure;
+      (process.env as Record<string, string | undefined>).NODE_ENV = saved;
+      return secure;
+    })(),
+    true,
+  );
+  eq(
+    "cookie is not Secure outside production",
+    (() => {
+      const saved = process.env.NODE_ENV;
+      (process.env as Record<string, string | undefined>).NODE_ENV = "development";
+      const secure = sessionCookieOptions().secure;
+      (process.env as Record<string, string | undefined>).NODE_ENV = saved;
+      return secure;
+    })(),
+    false,
+  );
+
+  // --- no-store on every private response -------------------------------
+  check(
+    "private responses are no-store",
+    NO_STORE_HEADERS["Cache-Control"].includes("no-store"),
+    NO_STORE_HEADERS["Cache-Control"],
+  );
+
+  // restore whatever the real environment had
+  if (REAL.DASHBOARD_PASSCODE === undefined) delete process.env.DASHBOARD_PASSCODE;
+  else process.env.DASHBOARD_PASSCODE = REAL.DASHBOARD_PASSCODE;
+  if (REAL.SESSION_SECRET === undefined) delete process.env.SESSION_SECRET;
+  else process.env.SESSION_SECRET = REAL.SESSION_SECRET;
 }
 
 console.log(`\n=============== UNIT TEST SUMMARY ===============`);

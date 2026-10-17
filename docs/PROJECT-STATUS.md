@@ -1,10 +1,10 @@
 # AI Employee — Project Status
 
-Updated: 18 October 2026 (end of Day 8)
+Updated: 19 October 2026 (end of Day 9)
 
 ## Current state
 
-Days 1-8 of 14 complete. Deployed on Vercel, backed by Neon PostgreSQL through
+Days 1-9 of 14 complete. Deployed on Vercel, backed by Neon PostgreSQL through
 Prisma. Answers product questions, collects order details in Arabic, French and
 English, shows a backend-built localized summary with a SHA-256 confirmation
 hash, and creates exactly one transactional Order from one explicit confirmation.
@@ -22,7 +22,19 @@ Next.js 16.4.0 (App Router, Turbopack, `cacheComponents`) · React 19.3.0 · Typ
 - **69 wilayas** (Loi 26-06, Decret 26-206). Audit: 276 inputs, **0 failures, 0 collisions**.
 - **Fees: office 400/500/600 DA by code, HOME = office + 200.** Explicit demo values because the fee feeds the confirmation hash.
 - **The backend owns every number.** Gemini never supplies prices, fees, totals, canonical identities or the summary text.
-- **Gemini picks en vs fr for Latin script**, so the backend cannot force French there; the conversation-language rule is what keeps Darija stable.
+
+## Day 9 — dashboard protection
+
+- **Dashboard URL: `/dashboard`.** Unauthenticated visitors see only the unlock form; no order is queried, so no order data can reach the HTML. Authenticated judges see the order list (table on desktop, cards on narrow screens) with reference, Africa/Algiers time, product, quantity/options, customer, delivery, total and a plain-English status label, plus Refresh and Log out. Confirm/Cancel are **not** shown; they are Days 10 and 11. It sets `export const instant = false`, because under `cacheComponents` a `cookies()` read is a request read and must block on the server.
+- `lib/auth.ts` — HMAC-SHA256 signed session token carrying only an expiry, verified with a constant-time comparison. HttpOnly, Secure in production, SameSite=Lax, path `/`, 12 hour max age. **The passcode is never in the cookie, the client bundle or the repository.**
+- **Fail closed.** A missing or short `DASHBOARD_PASSCODE` (<12 chars) or `SESSION_SECRET` (<32 chars) denies access instead of falling back to a default. Verified against a server with no auth env: the correct passcode is refused, no cookie is issued, and `/api/orders` stays 401.
+- `POST /api/admin/login` (Zod-validated, same-origin check, generic 401 with no `Set-Cookie`), `POST /api/admin/logout`, `GET /api/admin/session`. `GET /api/orders` and every admin response send `Cache-Control: no-store`.
+- **Spec 11.1 is honoured literally:** the session token is stateless, so a copy captured before logout stays valid until its 12 hour expiry. Logout clears the cookie, after which the browser presents nothing and access is refused.
+- Tests: 189 unit checks plus 44 end-to-end auth checks against a local production build using throwaway values that exist only in the shell session.
+
+## The demo passcode
+
+The passcode lives only in the Vercel environment. It is published in the **Thirduni submission description and the demo video**, never in this repository, and **must be changed after judging ends** (A-10). Judges reach `/dashboard` and type that passcode.
 
 ## Day 8 — language and reliability
 
@@ -30,8 +42,7 @@ Next.js 16.4.0 (App Router, Turbopack, `cacheComponents`) · React 19.3.0 · Typ
 - **Latin-script Darija stays French**, with worked Darija examples in the prompt and a rule that one short turn does not switch an established conversation language.
 - **Arabic-Indic digits no longer force Arabic.** They sit in the Arabic Unicode block but carry no language, so they are skipped by the script count.
 - **Article-free Arabic wilaya names resolve.** `جلفة` failed while `الجلفة` worked, and `المسعد` failed while `مسعد` worked. A bounded fallback strips a leading `ال`; verified safe (138 distinct keys from 138 names, 0 collisions).
-- `scripts/scenarios.mjs` grew 20 spec 16.2 scenarios (101-121), takes `BASE_URL`, is resumable by number, and **exits 64 on an unknown scenario number** instead of silently running everything.
-- Full results in `docs/TEST-RESULTS.md`.
+- `scripts/scenarios.mjs` grew 20 spec 16.2 scenarios (101-121), takes `BASE_URL`, is resumable by number, and **exits 64 on an unknown scenario number** instead of silently running everything. Full results in `docs/TEST-RESULTS.md`.
 
 ## Day 6-7 core
 
@@ -51,10 +62,11 @@ Next.js 16.4.0 (App Router, Turbopack, `cacheComponents`) · React 19.3.0 · Typ
 - Gemini extracts, the backend decides: the model may decline an invalid option in its own words, so the rejection template does not always fire — the invalid value is still never stored.
 - A short English-looking turn inside a Darija conversation is genuinely ambiguous; the model decides and the conversation-language rule keeps it stable in practice.
 - A missing delivery fee cannot be forced through the public endpoint without mutating data, so it is covered by unit tests, not a live scenario.
+- The session token is stateless, so a copy captured before logout stays valid until its 12 hour expiry. That is the design spec 11.1 describes (a signed cookie with an expiry, no revocation list).
 
 ## Gotchas
 
-- Next 16 `cacheComponents` **rejects** the `dynamic` and `runtime` route exports; `maxDuration` is allowed. Prisma 7 needs `prisma.config.ts`, a generator `output`, a driver adapter and `dotenv`; CHECK constraints are raw SQL.
+- Next 16 `cacheComponents` **rejects** the `dynamic` and `runtime` route exports; `maxDuration` is allowed. A `cookies()` read is a request read, so a cookie-reading page needs `export const instant = false`. Prisma 7 needs `prisma.config.ts`, a generator `output`, a driver adapter and `dotenv`.
 - PowerShell mangles UTF-8 — use a Node `fetch` client for anything Arabic, and never round-trip a UTF-8 file through `WriteAllText`. A free-form `payload` object makes Gemini return `{}`.
 - `git commit -m` breaks on PowerShell with `\"` or `/api`; use `git commit -F`.
 
@@ -74,5 +86,5 @@ Next.js 16.4.0 (App Router, Turbopack, `cacheComponents`) · React 19.3.0 · Typ
 ## Next steps
 
 1. **Day 9** — dashboard passcode and protected order list.
-2. **Days 10-11** — confirm/cancel with stock restore, demo reset.
-3. Replace the dashboard passcode placeholder before judging.
+2. **Days 10-11** — protected confirm/cancel with stock restore, demo reset.
+3. **Change the demo passcode after judging ends** (A-10).
