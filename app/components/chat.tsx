@@ -1,6 +1,18 @@
 "use client";
 
+// The customer panel. It is styled as a generic direct-message thread so the
+// idea reads at a glance, but it deliberately borrows nothing from any real
+// messaging brand: no logo, no gradient, no brand colour scheme.
+//
+// Every existing chat behaviour is unchanged: the conversationId lives only in
+// React state, the 500-character cap is enforced on input, sending is disabled
+// while a request is pending, failures are friendly and retryable, dir="auto"
+// makes Arabic and Latin bubbles align correctly, the message text is rendered
+// as plain text and never as HTML, and the transcript is the only scrolling
+// element, auto-scrolled through scrollTop.
+
 import { useCallback, useEffect, useRef, useState } from "react";
+import { SendIcon, SpinnerIcon } from "./icons";
 
 type Role = "customer" | "ai";
 
@@ -17,7 +29,19 @@ const MAX_INPUT = 500;
 const FRIENDLY_ERROR =
   "Sorry, we could not reach the assistant. Please try again.";
 
-export default function Chat() {
+/** Real questions that go through exactly the same send path as typing. */
+const QUICK_START: Array<{ label: string; text: string }> = [
+  { label: "السويت", text: "بكم سعر السويت؟" },
+  { label: "Français", text: "Je veux commander des baskets" },
+  { label: "English", text: "I'd like a grey hoodie in size L" },
+];
+
+export default function Chat({
+  onOrderCreated,
+}: {
+  /** Called with the new order id whenever /api/chat reports one was created. */
+  onOrderCreated?: (orderId: string | null) => void;
+}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -90,6 +114,8 @@ export default function Chat() {
           reply?: string;
           limited?: boolean;
           limitReason?: string | null;
+          orderCreated?: boolean;
+          __orderId?: string | null;
         };
 
         if (typeof data.conversationId === "string") {
@@ -112,6 +138,11 @@ export default function Chat() {
             "This conversation has reached its message limit. Start a new conversation to keep asking questions.",
           );
         }
+
+        // The orders panel listens for this so the new order appears at once.
+        if (data.orderCreated) {
+          onOrderCreated?.(data.__orderId ?? null);
+        }
       } catch {
         // Never surface a raw error, and never imply the message succeeded.
         setFailedText(text);
@@ -130,7 +161,7 @@ export default function Chat() {
         focusInput();
       }
     },
-    [conversationId, pending, focusInput],
+    [conversationId, pending, focusInput, onOrderCreated],
   );
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -141,39 +172,39 @@ export default function Chat() {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <header className="flex shrink-0 items-center justify-between gap-3">
-        <div className="flex min-w-0 flex-col">
-          <h1 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-50">
-            Boutique elegance
-          </h1>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            Demo AI Employee
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={startNewConversation}
-          disabled={pending}
-          className="shrink-0 rounded-full border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* Generic direct-message header. No third-party branding anywhere. */}
+      <header className="flex shrink-0 items-center gap-3 border-b border-hairline px-4 py-3">
+        <span
+          aria-hidden="true"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-wine font-display text-sm font-semibold text-white"
         >
-          New conversation
-        </button>
+          BE
+        </span>
+        <div className="flex min-w-0 flex-col">
+          <span className="truncate text-sm font-semibold text-charcoal">
+            @boutique.elegance
+          </span>
+          <span className="text-xs text-ash">Usually replies within a minute</span>
+        </div>
+        <span className="ml-auto shrink-0 rounded-full border border-hairline bg-linen px-2.5 py-1 text-[11px] font-medium tracking-wide text-brass uppercase">
+          Simulated
+        </span>
       </header>
 
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 space-y-2.5 overflow-y-auto overscroll-contain rounded-2xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900"
+        className="min-h-0 flex-1 space-y-2.5 overflow-y-auto overscroll-contain px-4 py-4"
         aria-live="polite"
       >
-        {messages.length === 0 && (
+        {messages.length === 0 ? (
           <div className="flex h-full items-center justify-center px-4">
-            <p className="text-center text-sm text-zinc-500 dark:text-zinc-400">
-              Ask about a product, for example its price, sizes, colors or
-              stock.
+            <p className="text-center text-sm text-ash">
+              Write in Arabic, Darija, French or English. Ask about a price, a
+              size, a colour, then place an order.
             </p>
           </div>
-        )}
+        ) : null}
 
         {messages.map((message) => (
           <div
@@ -181,8 +212,8 @@ export default function Chat() {
             dir="auto"
             className={
               message.role === "customer"
-                ? "ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-gradient-to-br from-violet-500 to-blue-500 px-3.5 py-2 text-[15px] leading-relaxed whitespace-pre-wrap text-white shadow-sm"
-                : "mr-auto max-w-[85%] rounded-2xl rounded-bl-md bg-zinc-100 px-3.5 py-2 text-[15px] leading-relaxed whitespace-pre-wrap text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+                ? "ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-wine px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-white"
+                : "mr-auto max-w-[85%] rounded-2xl rounded-bl-md border border-hairline bg-linen px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-charcoal"
             }
           >
             {message.text}
@@ -192,33 +223,26 @@ export default function Chat() {
         {pending && (
           <div
             dir="auto"
-            className="mr-auto flex w-fit items-center gap-1 rounded-2xl rounded-bl-md bg-zinc-100 px-4 py-3.5 dark:bg-zinc-800"
+            className="mr-auto flex w-fit items-center gap-2 rounded-2xl rounded-bl-md border border-hairline bg-linen px-4 py-3"
             aria-label="Assistant is typing"
           >
-            <span
-              className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400"
-              style={{ animationDelay: "0ms" }}
-            />
-            <span
-              className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400"
-              style={{ animationDelay: "160ms" }}
-            />
-            <span
-              className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400"
-              style={{ animationDelay: "320ms" }}
-            />
+            <SpinnerIcon className="h-3.5 w-3.5 text-brass" />
+            <span className="text-sm text-ash">Writing…</span>
           </div>
         )}
       </div>
 
       {notice && (
-        <div className="shrink-0 rounded-2xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+        <div
+          role="alert"
+          className="shrink-0 border-t border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900"
+        >
           <p>{notice}</p>
           {failedText && (
             <button
               type="button"
               onClick={() => void send(failedText)}
-              className="mt-2 rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white transition hover:bg-amber-600"
+              className="mt-2 min-h-11 rounded-full bg-wine px-4 text-xs font-semibold text-white transition hover:bg-wine-deep"
             >
               Retry
             </button>
@@ -226,8 +250,23 @@ export default function Chat() {
         </div>
       )}
 
-      <div className="shrink-0 space-y-1.5">
-        <p className="text-center text-xs text-zinc-400 dark:text-zinc-500">
+      <div className="shrink-0 space-y-2 border-t border-hairline px-4 py-3">
+        <div className="flex flex-wrap gap-1.5">
+          {QUICK_START.map((chip) => (
+            <button
+              key={chip.label}
+              type="button"
+              disabled={pending}
+              onClick={() => void send(chip.text)}
+              title={chip.text}
+              className="min-h-11 rounded-full border border-hairline bg-white px-3.5 text-sm font-medium text-charcoal transition hover:border-brass hover:bg-linen disabled:opacity-50"
+            >
+              {chip.label}
+            </button>
+          ))}
+        </div>
+
+        <p className="text-center text-xs text-ash">
           Demo only. Don&apos;t enter real personal data.
         </p>
 
@@ -241,37 +280,33 @@ export default function Chat() {
           <textarea
             ref={inputRef}
             value={input}
-            onChange={(event) =>
-              setInput(event.target.value.slice(0, MAX_INPUT))
-            }
+            onChange={(event) => setInput(event.target.value.slice(0, MAX_INPUT))}
             onKeyDown={onKeyDown}
             rows={1}
             maxLength={MAX_INPUT}
             readOnly={pending}
-            placeholder="Ask about a product..."
+            placeholder="Write a message…"
             aria-label="Message"
-            className="max-h-32 min-h-[44px] flex-1 resize-none rounded-full border border-zinc-300 bg-white px-4 py-3 text-[15px] leading-snug outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-200 dark:border-zinc-700 dark:bg-zinc-900 dark:focus:ring-violet-900"
+            className="max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-hairline bg-white px-4 py-3 text-[15px] leading-snug text-charcoal outline-none placeholder:text-ash focus:border-wine focus:ring-2 focus:ring-wine/20"
           />
           <button
             type="submit"
             disabled={pending || input.trim().length === 0}
             aria-label="Send"
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-blue-500 text-white shadow-sm transition hover:opacity-90 disabled:opacity-40"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-wine text-white transition hover:bg-wine-deep disabled:opacity-40"
           >
-            <svg
-              viewBox="0 0 24 24"
-              className="h-5 w-5 rotate-90"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M5 12h14M13 6l6 6-6 6" />
-            </svg>
+            <SendIcon />
           </button>
         </form>
+
+        <button
+          type="button"
+          onClick={startNewConversation}
+          disabled={pending}
+          className="min-h-11 w-full rounded-full border border-hairline bg-white px-3 py-1.5 text-xs font-medium text-charcoal transition hover:bg-linen disabled:opacity-50"
+        >
+          New conversation
+        </button>
       </div>
     </div>
   );

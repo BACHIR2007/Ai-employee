@@ -1,10 +1,10 @@
 # AI Employee — Project Status
 
-Updated: 20 October 2026 (end of Day 10)
+Updated: 20 October 2026 (redesign)
 
 ## Current state
 
-Days 1-10 of 14 complete. Deployed on Vercel, backed by Neon PostgreSQL through Prisma. A customer can chat in Arabic, Latin-script Darija, French or English, collect an order, see a backend-built summary, confirm it, and **create exactly one transactional Order**. The visitor sees only their own orders and can confirm or cancel them. A hidden owner view lists every order.
+Days 1-10 of 14 complete, plus a full UI redesign. Deployed on Vercel, backed by Neon PostgreSQL through Prisma. A customer can chat in Arabic, Latin-script Darija, French or English, collect an order, see a backend-built summary, confirm it, and **create exactly one transactional Order**. The visitor sees only their own orders and can confirm or cancel them. A hidden owner view lists every order.
 
 ## Stack
 
@@ -17,6 +17,18 @@ Next.js 16.4.0 (App Router, Turbopack, `cacheComponents`) · React 19.3.0 · Typ
 - **69 wilayas** (Loi 26-06, Decret 26-206). Audit: 276 inputs, **0 failures, 0 collisions**.
 - **Fees: office 400/500/600 DA by code, HOME = office + 200.** Explicit demo values because the fee feeds the confirmation hash.
 - **The backend owns every number.** Gemini never supplies prices, fees, totals, canonical identities or the summary text.
+
+## Redesign — everything on one page
+
+`/` now carries the whole demo: brand header, a three-step strip, the real catalog, the conversation and the order the shop owner would act on. **No passcode, no second screen.**
+
+- **Two panels.** Desktop (>=1024px): side by side. Below that: a sticky `role="tablist"` with Chat and Orders (count badge), driven by `DemoShell`.
+- **`DemoShell`** owns the shared state. When `/api/chat` reports `orderCreated`, it bumps a `refreshToken`, so `MyOrders` reloads at once and the new card is highlighted. A banner offers a jump to the Orders tab. The 15 s auto-refresh pauses while the tab is hidden **and while a mutation is pending**, so it can never race a click.
+- **`app/components/catalog-strip.tsx`** reads PostgreSQL on the server. `await io()` keeps the read out of the static shell, so `/` is partial-prerendered and the prices are fresh on every request. Colour swatches come only from a product's real `options.colors`; there are no images at all.
+- **`app/dashboard/MyOrders.tsx`** renders the full order card: `#` plus the first 6 id characters, the Algiers timestamp, a status chip with one plain-English line, customer name, phone as `0550 12 34 56`, delivery method, wilaya, the address **only** for home delivery, the item with colour and size, and a unit-price x quantity / delivery-fee / total breakdown computed in integer minor units. No payment line, because there is none.
+- `/dashboard` now redirects to `/`. `/admin` is untouched.
+- **Fonts** are self-hosted at build by `next/font`: Playfair Display, Plus Jakarta Sans and Noto Naskh Arabic (`arabic` subset). The two Latin faces have no Arabic coverage, so without the third the browser synthesises Arabic and it looks wrong. Icons are inline SVG: no icon font, no CDN, no external stylesheet or script.
+- Copy carries no claim that cannot be true: no "encrypted", no "discretion", no "private clienteling".
 
 ## Day 10 — order actions and public visitor access (A-14)
 
@@ -60,6 +72,8 @@ Next.js 16.4.0 (App Router, Turbopack, `cacheComponents`) · React 19.3.0 · Typ
 - A stale `next start` can hold port 4200 and serve an OLD build. Check the **LISTENING** owner; `Get-NetTCPConnection -LocalPort` also returns TIME_WAIT rows whose owner is PID 0.
 - **The local app and the deployed app share one Neon database**, so local runs spend the deployed hourly allowance.
 - Next appends its own RSC tokens to `Vary`, so assert `Cookie` is *in* the header rather than equal to it.
+- Under `cacheComponents`, Prisma in a page needs `await io()` (from `next/cache`) inside a `<Suspense>` boundary; without it the read lands in the static shell. `next/font` emits hashed `*_variable` class names on `<html>` and the family names only in the generated CSS, so a font assertion must look at the stylesheet, not the HTML.
+- `react-hooks/set-state-in-effect` rejects a plain fetch-on-mount. Deferring the first load with `setTimeout(…, 0)` keeps it a data fetch instead of a render-phase state change.
 
 ## Operational notes
 
@@ -75,5 +89,4 @@ Next.js 16.4.0 (App Router, Turbopack, `cacheComponents`) · React 19.3.0 · Typ
 ## Next steps
 
 1. **Day 11** — protected demo reset: restore seeded stock and clear demo orders, conversations and messages.
-2. Embed the `MyOrders` component in the main page during the redesign.
-3. **Change the demo passcode after judging ends** (A-10).
+2. **Change the demo passcode after judging ends** (A-10).
