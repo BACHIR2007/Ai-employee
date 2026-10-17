@@ -129,10 +129,10 @@ function CatalogSkeleton() {
 /** Compact catalog strip, rendered on the server from the real database. */
 export default function CatalogStrip() {
   return (
-    <section aria-labelledby="catalog-heading" className="shrink-0">
+    <section aria-labelledby="catalog-heading">
       <h2
         id="catalog-heading"
-        className="mb-2 text-[11px] font-semibold tracking-[0.14em] text-brass uppercase"
+        className="mb-1.5 text-[11px] font-semibold tracking-[0.14em] text-brass uppercase"
       >
         In stock now
       </h2>

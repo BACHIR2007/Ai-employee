@@ -26,15 +26,15 @@ type ChatMessage = {
 const CLIENT_TIMEOUT_MS = 65_000;
 const MAX_INPUT = 500;
 
+/** The textarea starts at 2 rows and grows to about 6 before it scrolls. */
+const COMPOSER_MIN_ROWS = 2;
+const COMPOSER_MAX_ROWS = 6;
+const ROW_HEIGHT_PX = 24;
+const COMPOSER_MIN_PX = COMPOSER_MIN_ROWS * ROW_HEIGHT_PX;
+const COMPOSER_MAX_PX = COMPOSER_MAX_ROWS * ROW_HEIGHT_PX;
+
 const FRIENDLY_ERROR =
   "Sorry, we could not reach the assistant. Please try again.";
-
-/** Real questions that go through exactly the same send path as typing. */
-const QUICK_START: Array<{ label: string; text: string }> = [
-  { label: "السويت", text: "بكم سعر السويت؟" },
-  { label: "Français", text: "Je veux commander des baskets" },
-  { label: "English", text: "I'd like a grey hoodie in size L" },
-];
 
 export default function Chat({
   onOrderCreated,
@@ -52,12 +52,27 @@ export default function Chat({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Scroll the message container itself, never the window, so the input bar
-  // stays pinned and the page height never grows.
+  // Auto-grow the composer from 2 rows up to about 6, then let it scroll
+  // inside itself. Height is set from scrollHeight so the box never jumps.
+  const resizeComposer = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const next = Math.min(Math.max(el.scrollHeight, COMPOSER_MIN_PX), COMPOSER_MAX_PX);
+    el.style.height = `${next}px`;
+    el.style.overflowY = el.scrollHeight > COMPOSER_MAX_PX ? "auto" : "hidden";
+  }, []);
+
+  // Scroll the message container itself, never the window and never
+  // scrollIntoView, so only the transcript moves.
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, pending]);
+
+  useEffect(() => {
+    resizeComposer();
+  }, [input, resizeComposer]);
 
   const focusInput = useCallback(() => {
     inputRef.current?.focus();
@@ -165,6 +180,7 @@ export default function Chat({
   );
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter sends. Shift+Enter inserts a real newline.
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void send(input);
@@ -174,7 +190,7 @@ export default function Chat({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Generic direct-message header. No third-party branding anywhere. */}
-      <header className="flex shrink-0 items-center gap-3 border-b border-hairline px-4 py-3">
+      <header className="flex shrink-0 items-center gap-3 border-b border-hairline px-4 py-2.5">
         <span
           aria-hidden="true"
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-wine font-display text-sm font-semibold text-white"
@@ -190,15 +206,23 @@ export default function Chat({
         <span className="ml-auto shrink-0 rounded-full border border-hairline bg-linen px-2.5 py-1 text-[11px] font-medium tracking-wide text-brass uppercase">
           Simulated
         </span>
+        <button
+          type="button"
+          onClick={startNewConversation}
+          disabled={pending}
+          className="shrink-0 rounded-full border border-hairline bg-white px-3 py-1.5 text-xs font-medium text-charcoal transition hover:bg-linen disabled:opacity-50"
+        >
+          New conversation
+        </button>
       </header>
 
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 space-y-2.5 overflow-y-auto overscroll-contain px-4 py-4"
+        className="flex min-h-80 flex-1 flex-col overflow-y-auto overscroll-contain px-4 py-4"
         aria-live="polite"
       >
         {messages.length === 0 ? (
-          <div className="flex h-full items-center justify-center px-4">
+          <div className="flex flex-1 items-center justify-center px-4 py-8">
             <p className="text-center text-sm text-ash">
               Write in Arabic, Darija, French or English. Ask about a price, a
               size, a colour, then place an order.
@@ -206,6 +230,7 @@ export default function Chat({
           </div>
         ) : null}
 
+        <div className="space-y-2.5">
         {messages.map((message) => (
           <div
             key={message.id}
@@ -230,6 +255,7 @@ export default function Chat({
             <span className="text-sm text-ash">Writing…</span>
           </div>
         )}
+        </div>
       </div>
 
       {notice && (
@@ -250,22 +276,7 @@ export default function Chat({
         </div>
       )}
 
-      <div className="shrink-0 space-y-2 border-t border-hairline px-4 py-3">
-        <div className="flex flex-wrap gap-1.5">
-          {QUICK_START.map((chip) => (
-            <button
-              key={chip.label}
-              type="button"
-              disabled={pending}
-              onClick={() => void send(chip.text)}
-              title={chip.text}
-              className="min-h-11 rounded-full border border-hairline bg-white px-3.5 text-sm font-medium text-charcoal transition hover:border-brass hover:bg-linen disabled:opacity-50"
-            >
-              {chip.label}
-            </button>
-          ))}
-        </div>
-
+      <div className="shrink-0 space-y-1.5 border-t border-hairline px-4 py-2.5">
         <p className="text-center text-xs text-ash">
           Demo only. Don&apos;t enter real personal data.
         </p>
@@ -282,12 +293,13 @@ export default function Chat({
             value={input}
             onChange={(event) => setInput(event.target.value.slice(0, MAX_INPUT))}
             onKeyDown={onKeyDown}
-            rows={1}
+            rows={COMPOSER_MIN_ROWS}
             maxLength={MAX_INPUT}
             readOnly={pending}
+            dir="auto"
             placeholder="Write a message…"
             aria-label="Message"
-            className="max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-hairline bg-white px-4 py-3 text-[15px] leading-snug text-charcoal outline-none placeholder:text-ash focus:border-wine focus:ring-2 focus:ring-wine/20"
+            className="w-full flex-1 resize-none overflow-y-hidden rounded-2xl border border-hairline bg-white px-4 py-2.5 text-[15px] leading-6 text-charcoal outline-none placeholder:text-ash focus:border-wine focus:ring-2 focus:ring-wine/20"
           />
           <button
             type="submit"
@@ -299,14 +311,9 @@ export default function Chat({
           </button>
         </form>
 
-        <button
-          type="button"
-          onClick={startNewConversation}
-          disabled={pending}
-          className="min-h-11 w-full rounded-full border border-hairline bg-white px-3 py-1.5 text-xs font-medium text-charcoal transition hover:bg-linen disabled:opacity-50"
-        >
-          New conversation
-        </button>
+        <p className="text-right text-xs text-ash tabular-nums">
+          {input.length}/{MAX_INPUT}
+        </p>
       </div>
     </div>
   );

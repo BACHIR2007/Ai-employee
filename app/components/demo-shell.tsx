@@ -56,7 +56,7 @@ export default function DemoShell() {
       <div
         role="tablist"
         aria-label="Demo panels"
-        className="sticky top-0 z-10 flex shrink-0 gap-1 border-b border-hairline bg-ivory/95 px-3 py-2 backdrop-blur lg:hidden"
+        className="sticky top-0 z-10 flex shrink-0 gap-1 border-b border-hairline bg-ivory/95 px-3 py-1.5 backdrop-blur lg:hidden"
       >
         <TabButton
           active={tab === "chat"}
@@ -72,12 +72,12 @@ export default function DemoShell() {
         />
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:gap-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:gap-5">
         {/* Customer view */}
         <section
           role="tabpanel"
           aria-label="Customer view"
-          className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-hairline bg-white shadow-paper ${
+          className={`flex flex-col overflow-hidden rounded-2xl border border-hairline bg-white shadow-paper [height:clamp(520px,calc(100dvh-190px),760px)] lg:[height:clamp(620px,82dvh,880px)] lg:flex-1 ${
             tab === "chat" ? "flex" : "hidden lg:flex"
           }`}
         >
@@ -92,7 +92,7 @@ export default function DemoShell() {
         <section
           role="tabpanel"
           aria-label="Shop owner view"
-          className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-hairline bg-white shadow-paper ${
+          className={`flex flex-col overflow-hidden rounded-2xl border border-hairline bg-white shadow-paper [height:clamp(520px,calc(100dvh-190px),760px)] lg:[height:clamp(620px,82dvh,880px)] lg:flex-1 ${
             tab === "orders" ? "flex" : "hidden lg:flex"
           }`}
         >

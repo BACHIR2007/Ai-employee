@@ -104,6 +104,7 @@ export default function MyOrders({
   const [pendingId, setPendingId] = useState<string | null>(null);
   const visible = useRef(true);
   const mutating = useRef(false);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -137,12 +138,22 @@ export default function MyOrders({
     };
   }, [load]);
 
-  // The chat panel bumps refreshToken the moment an order is created.
+  // The chat panel bumps refreshToken the moment an order is created. The list
+  // scrolls itself to the new card by setting scrollTop on the LIST CONTAINER,
+  // never with scrollIntoView, so only the panel moves and never the page.
   useEffect(() => {
     if (refreshToken === 0) return;
-    const t = setTimeout(() => load(), 0);
+    const t = setTimeout(() => {
+      void load();
+      const box = listRef.current;
+      if (!box || !highlightId) return;
+      const card = box.querySelector<HTMLElement>(`[data-order-id="${highlightId}"]`);
+      if (card) {
+        box.scrollTop = Math.max(0, card.offsetTop - 8);
+      }
+    }, 0);
     return () => clearTimeout(t);
-  }, [refreshToken, load]);
+  }, [refreshToken, highlightId, load]);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -228,8 +239,12 @@ export default function MyOrders({
         </div>
       ) : null}
 
+      {/* The scrolling list. Its own container scrolls, so a long order is
+          always reachable without moving the page. 24px of bottom padding keeps
+          the last card's buttons clear of the panel edge. */}
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-6">
       {orders.length > 0 ? (
-        <ul className="space-y-3 px-4 py-4">
+        <ul className="space-y-3 px-4 pt-4">
           {orders.map((o) => {
             const busy = pendingId === o.id;
             const canConfirm = o.status === "NOT_YET_CONFIRMED";
@@ -239,6 +254,7 @@ export default function MyOrders({
             return (
               <li
                 key={o.id}
+                data-order-id={o.id}
                 className={`rounded-2xl border bg-white p-4 shadow-paper transition-colors ${
                   highlighted ? "border-wine ring-2 ring-wine/25" : "border-hairline"
                 }`}
@@ -381,6 +397,7 @@ export default function MyOrders({
           })}
         </ul>
       ) : null}
+      </div>
     </section>
   );
 }

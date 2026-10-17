@@ -22,8 +22,8 @@ const STEPS: Array<{ title: string; body: string }> = [
 
 export default function Home() {
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-ivory">
-      <header className="shrink-0 border-b border-hairline px-4 py-3 sm:px-6">
+    <div className="min-h-dvh bg-ivory">
+      <header className="border-b border-hairline px-4 py-2.5 sm:px-6">
         <div className="mx-auto flex w-full max-w-6xl items-center gap-3">
           <span
             aria-hidden="true"
@@ -40,10 +40,10 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-4 sm:px-6">
+      <main className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-3 sm:px-6">
         <section
           aria-labelledby="how-it-works"
-          className="shrink-0 rounded-2xl border border-hairline bg-white px-4 py-4 shadow-paper"
+          className="rounded-2xl border border-hairline bg-white px-4 py-3 shadow-paper"
         >
           <h2
             id="how-it-works"
@@ -51,7 +51,7 @@ export default function Home() {
           >
             How this works
           </h2>
-          <ol className="mt-2.5 grid gap-3 sm:grid-cols-3">
+          <ol className="mt-2 grid gap-2 sm:grid-cols-3">
             {STEPS.map((step, i) => (
               <li key={step.title} className="flex gap-2.5">
                 <span
@@ -69,7 +69,7 @@ export default function Home() {
               </li>
             ))}
           </ol>
-          <p className="mt-3 border-t border-hairline pt-2.5 text-xs text-ash">
+          <p className="mt-2.5 border-t border-hairline pt-2 text-xs text-ash">
             In the real product this chat lives inside the shop&apos;s Instagram
             account. This panel simulates it.
           </p>
