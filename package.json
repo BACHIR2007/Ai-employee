@@ -11,6 +11,7 @@
     "test:orders": "tsx scripts/order-integration.ts",
     "test:restore-stock": "tsx scripts/restore-seed-stock.ts",
     "test:scenarios": "tsx scripts/scenarios.mjs",
+    "reset-demo": "tsx scripts/reset-demo.ts",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",

@@ -251,8 +251,19 @@ async function runOrderCreation(args: {
   }
 }
 
+/**
+ * Every chat response is private and uncacheable. The body can carry the
+ * caller's own draft, hash, gate and order id, so it must never be written to a
+ * shared cache. `Vary: Cookie` because the answer depends on the visitor cookie.
+ */
+const CHAT_HEADERS = {
+  "Cache-Control": "private, no-store, no-cache, must-revalidate",
+  Vary: "Cookie",
+  Pragma: "no-cache",
+};
+
 function okJson(body: unknown) {
-  return Response.json(body, { status: 200 });
+  return Response.json(body, { status: 200, headers: CHAT_HEADERS });
 }
 
 /**
