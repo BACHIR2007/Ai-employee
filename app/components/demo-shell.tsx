@@ -73,11 +73,15 @@ export default function DemoShell() {
       </div>
 
       <div className="flex flex-col gap-4 lg:flex-row lg:gap-5">
-        {/* Customer view */}
+        {/* Customer view. On a phone the panel is sized from dvh so the WHOLE
+            panel, composer included, fits in the viewport below the sticky
+            switcher. scroll-mt keeps the switcher from covering the top of
+            the panel when it is scrolled into view. Every lg: value is the
+            original desktop layout. */}
         <section
           role="tabpanel"
           aria-label="Customer view"
-          className={`flex flex-col overflow-hidden rounded-2xl border border-hairline bg-white shadow-paper [height:clamp(520px,calc(100dvh-190px),760px)] lg:[height:clamp(620px,82dvh,880px)] lg:flex-1 ${
+          className={`flex scroll-mt-16 flex-col overflow-hidden rounded-2xl border border-hairline bg-white shadow-paper [height:clamp(340px,calc(100dvh-130px),760px)] lg:scroll-mt-0 lg:[height:clamp(620px,82dvh,880px)] lg:flex-1 ${
             tab === "chat" ? "flex" : "hidden lg:flex"
           }`}
         >
@@ -92,7 +96,7 @@ export default function DemoShell() {
         <section
           role="tabpanel"
           aria-label="Shop owner view"
-          className={`flex flex-col overflow-hidden rounded-2xl border border-hairline bg-white shadow-paper [height:clamp(520px,calc(100dvh-190px),760px)] lg:[height:clamp(620px,82dvh,880px)] lg:flex-1 ${
+          className={`flex scroll-mt-16 flex-col overflow-hidden rounded-2xl border border-hairline bg-white shadow-paper [height:clamp(340px,calc(100dvh-130px),760px)] lg:scroll-mt-0 lg:[height:clamp(620px,82dvh,880px)] lg:flex-1 ${
             tab === "orders" ? "flex" : "hidden lg:flex"
           }`}
         >
@@ -157,11 +161,13 @@ function PanelHeading({
   subtitle: string;
 }) {
   return (
-    <div className="shrink-0 border-b border-hairline bg-linen px-4 py-3">
-      <h2 className="font-display text-base font-semibold text-charcoal">
+    <div className="shrink-0 border-b border-hairline bg-linen px-3 py-2 lg:px-4 lg:py-3">
+      {/* The subtitle is hidden on a phone, where every vertical pixel belongs
+          to the transcript and the composer. */}
+      <h2 className="truncate font-display text-sm font-semibold text-charcoal lg:text-base">
         {title}
       </h2>
-      <p className="mt-0.5 text-xs text-ash">{subtitle}</p>
+      <p className="mt-0.5 hidden text-xs text-ash lg:block">{subtitle}</p>
     </div>
   );
 }

@@ -29,9 +29,10 @@ const MAX_INPUT = 500;
 /** The textarea starts at 2 rows and grows to about 6 before it scrolls. */
 const COMPOSER_MIN_ROWS = 2;
 const COMPOSER_MAX_ROWS = 6;
+/** On a phone the composer must leave the transcript room, so it caps lower. */
+const COMPOSER_MAX_ROWS_MOBILE = 4;
 const ROW_HEIGHT_PX = 24;
 const COMPOSER_MIN_PX = COMPOSER_MIN_ROWS * ROW_HEIGHT_PX;
-const COMPOSER_MAX_PX = COMPOSER_MAX_ROWS * ROW_HEIGHT_PX;
 
 const FRIENDLY_ERROR =
   "Sorry, we could not reach the assistant. Please try again.";
@@ -54,13 +55,19 @@ export default function Chat({
 
   // Auto-grow the composer from 2 rows up to about 6, then let it scroll
   // inside itself. Height is set from scrollHeight so the box never jumps.
+  //
+  // The cap is lower on a phone, where the composer has to share the panel
+  // with the transcript. The breakpoint is read at resize time rather than kept
+  // in state, so there is no hydration mismatch and no re-render.
   const resizeComposer = useCallback(() => {
     const el = inputRef.current;
     if (!el) return;
+    const isDesktop = window.matchMedia("(min-width: 1024px)").matches;
+    const maxPx = (isDesktop ? COMPOSER_MAX_ROWS : COMPOSER_MAX_ROWS_MOBILE) * ROW_HEIGHT_PX;
     el.style.height = "auto";
-    const next = Math.min(Math.max(el.scrollHeight, COMPOSER_MIN_PX), COMPOSER_MAX_PX);
+    const next = Math.min(Math.max(el.scrollHeight, COMPOSER_MIN_PX), maxPx);
     el.style.height = `${next}px`;
-    el.style.overflowY = el.scrollHeight > COMPOSER_MAX_PX ? "auto" : "hidden";
+    el.style.overflowY = el.scrollHeight > maxPx ? "auto" : "hidden";
   }, []);
 
   // Scroll the message container itself, never the window and never
@@ -73,6 +80,12 @@ export default function Chat({
   useEffect(() => {
     resizeComposer();
   }, [input, resizeComposer]);
+
+  // A rotation or a window resize can change which cap applies.
+  useEffect(() => {
+    window.addEventListener("resize", resizeComposer);
+    return () => window.removeEventListener("resize", resizeComposer);
+  }, [resizeComposer]);
 
   const focusInput = useCallback(() => {
     inputRef.current?.focus();
@@ -189,36 +202,58 @@ export default function Chat({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* Generic direct-message header. No third-party branding anywhere. */}
-      <header className="flex shrink-0 items-center gap-3 border-b border-hairline px-4 py-2.5">
+      {/* Generic direct-message header. No third-party branding anywhere.
+          On a phone it is ONE compact row: a small avatar, the handle
+          truncated but never wrapped word by word, a small chip and an icon
+          button with a 44px touch target. Every lg: value is the original. */}
+      <header className="flex shrink-0 items-center gap-1.5 border-b border-hairline px-2 py-1.5 lg:gap-3 lg:px-4 lg:py-2.5">
         <span
           aria-hidden="true"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-wine font-display text-sm font-semibold text-white"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-wine font-display text-[11px] font-semibold text-white lg:h-11 lg:w-11 lg:text-sm"
         >
           BE
         </span>
-        <div className="flex min-w-0 flex-col">
-          <span className="truncate text-sm font-semibold text-charcoal">
+        <div className="flex min-w-0 flex-1 flex-col lg:flex-initial">
+          {/* min-w in ch is font-relative, so the handle keeps at least 12
+              characters visible at any text zoom, and truncates rather than
+              wrapping one word per line. */}
+          <span className="min-w-[12ch] truncate text-sm font-semibold text-charcoal lg:min-w-0">
             @boutique.elegance
           </span>
-          <span className="text-xs text-ash">Usually replies within a minute</span>
+          <span className="hidden text-xs text-ash lg:block">
+            Usually replies within a minute
+          </span>
         </div>
-        <span className="ml-auto shrink-0 rounded-full border border-hairline bg-linen px-2.5 py-1 text-[11px] font-medium tracking-wide text-brass uppercase">
+        <span className="shrink-0 rounded-full border border-hairline bg-linen px-1 py-0.5 text-[9px] font-medium tracking-wide text-brass uppercase lg:ml-auto lg:px-2.5 lg:py-1 lg:text-[11px]">
           Simulated
         </span>
         <button
           type="button"
           onClick={startNewConversation}
           disabled={pending}
-          className="shrink-0 rounded-full border border-hairline bg-white px-3 py-1.5 text-xs font-medium text-charcoal transition hover:bg-linen disabled:opacity-50"
+          aria-label="New conversation"
+          title="New conversation"
+          className="flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-full border border-hairline bg-white text-charcoal transition hover:bg-linen disabled:opacity-50 lg:h-auto lg:w-auto lg:px-3 lg:py-1.5 lg:text-xs lg:font-medium"
         >
-          New conversation
+          <svg
+            viewBox="0 0 24 24"
+            className="h-4 w-4 lg:hidden"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.8}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          <span className="hidden lg:inline">New conversation</span>
         </button>
       </header>
 
       <div
         ref={scrollRef}
-        className="flex min-h-80 flex-1 flex-col overflow-y-auto overscroll-contain px-4 py-4"
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-3 py-3 lg:min-h-80 lg:px-4 lg:py-4"
         aria-live="polite"
       >
         {messages.length === 0 ? (
@@ -276,7 +311,7 @@ export default function Chat({
         </div>
       )}
 
-      <div className="shrink-0 space-y-1.5 border-t border-hairline px-4 py-2.5">
+      <div className="shrink-0 space-y-1.5 border-t border-hairline px-3 py-2 lg:px-4 lg:py-2.5">
         <p className="text-center text-xs text-ash">
           Demo only. Don&apos;t enter real personal data.
         </p>
@@ -299,7 +334,7 @@ export default function Chat({
             dir="auto"
             placeholder="Write a message…"
             aria-label="Message"
-            className="w-full flex-1 resize-none overflow-y-hidden rounded-2xl border border-hairline bg-white px-4 py-2.5 text-[15px] leading-6 text-charcoal outline-none placeholder:text-ash focus:border-wine focus:ring-2 focus:ring-wine/20"
+            className="w-full flex-1 resize-none overflow-y-hidden rounded-2xl border border-hairline bg-white px-3 py-2 text-[15px] leading-6 text-charcoal outline-none placeholder:text-ash focus:border-wine focus:ring-2 focus:ring-wine/20 lg:px-4 lg:py-2.5"
           />
           <button
             type="submit"
